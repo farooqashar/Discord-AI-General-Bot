@@ -1,0 +1,15 @@
+# Copy to .dev.vars (git-ignored). Used by `npm run register` and `npm run dev`.
+# In production these live as Cloudflare secrets instead.
+
+# Discord Developer Portal → your app → General Information
+DISCORD_APP_ID=
+DISCORD_PUBLIC_KEY=
+
+# Discord Developer Portal → your app → Bot → Reset Token
+DISCORD_TOKEN=
+
+# Right-click your server icon → Copy Server ID (turn on Developer Mode first)
+DISCORD_GUILD_ID=
+
+# console.anthropic.com → API Keys
+ANTHROPIC_API_KEY=

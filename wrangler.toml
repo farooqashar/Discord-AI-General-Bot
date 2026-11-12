@@ -1,0 +1,26 @@
+name = "discord-ai-general-bot"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+# Times like "tomorrow at 6pm" are read in this time zone.
+TIMEZONE = "America/New_York"
+# Fast and cheap. Swap for "claude-sonnet-5-5" if you want smarter answers.
+CLAUDE_MODEL = "claude-haiku-5-5"
+
+# Stores pending /remind reminders.
+[[d1_databases]]
+binding = "DB"
+database_name = "discord-bot-reminders"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# Check for due reminders every minute.
+[triggers]
+crons = ["* * * * *"]
+
+[observability]
+enabled = true
+
+# Secrets (set with `npx wrangler secret put NAME`, never committed):
+#   DISCORD_PUBLIC_KEY, DISCORD_TOKEN, ANTHROPIC_API_KEY

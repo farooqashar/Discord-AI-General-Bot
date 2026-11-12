@@ -1,0 +1,17 @@
+{
+  "name": "discord-ai-general-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A small Discord bot on Cloudflare Workers with Claude-powered slash commands: /ask, /tldr, /event, /remind and /research.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "register": "node --env-file=.dev.vars scripts/register-commands.js",
+    "db:migrate": "wrangler d1 migrations apply discord-bot-reminders --remote",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
