@@ -9,8 +9,9 @@ preview_urls = false
 BOT_NAME = "AshBot"
 # Times like "tomorrow at 6pm" are read in this time zone.
 TIMEZONE = "America/New_York"
-# Fast and cheap. Swap for "claude-sonnet-5-5" if you want smarter answers.
-CLAUDE_MODEL = "claude-haiku-5-5"
+# Which model answers. "claude-haiku-5-5" is fastest and cheapest,
+# "claude-sonnet-5-5" is a good middle ground, "claude-fable-5-2" is the most capable.
+CLAUDE_MODEL = "claude-fable-5-2"
 # Where /food looks when no area is given.
 DEFAULT_AREA = "New York, NY"
 # Your Discord Application ID (not a secret). Lets the bot re-register its
