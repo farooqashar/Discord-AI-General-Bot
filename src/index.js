@@ -8,7 +8,6 @@ import { decide } from "./commands/decide.js";
 import { eli5 } from "./commands/eli5.js";
 import { event } from "./commands/event.js";
 import { food } from "./commands/food.js";
-import { imagine } from "./commands/imagine.js";
 import { postDueReminders, remind } from "./commands/remind.js";
 import { research } from "./commands/research.js";
 import { roast } from "./commands/roast.js";
@@ -33,7 +32,6 @@ export const HANDLERS = {
   eli5,
   decide,
   trivia,
-  imagine,
   food,
   roast,
 };

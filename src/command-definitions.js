@@ -96,19 +96,6 @@ const DEFINITIONS = [
     ],
   },
   {
-    name: "imagine",
-    description: "Generate an image from a description",
-    options: [
-      {
-        type: 3,
-        name: "prompt",
-        description: "Describe the image you want",
-        required: true,
-        max_length: 1000,
-      },
-    ],
-  },
-  {
     name: "food",
     description: "Get restaurant ideas for what you're craving",
     options: [

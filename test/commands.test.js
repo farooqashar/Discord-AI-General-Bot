@@ -3,7 +3,6 @@ import { afterEach, test } from "node:test";
 import { COMMANDS } from "../src/command-definitions.js";
 import { decide, parseOptions } from "../src/commands/decide.js";
 import { event, googleCalendarUrl } from "../src/commands/event.js";
-import { imagine } from "../src/commands/imagine.js";
 import { roast } from "../src/commands/roast.js";
 import { trivia } from "../src/commands/trivia.js";
 import { HANDLERS } from "../src/index.js";
@@ -137,32 +136,6 @@ test("/trivia hides the answer in a spoiler and includes all four choices", asyn
   const content = lastEdit(calls).body.content;
   for (const c of ["Canberra", "Sydney", "Melbourne", "Perth"]) assert.ok(content.includes(c));
   assert.match(content, /\|\|.*\*\*Canberra\*\*.*\|\|/);
-});
-
-test("/imagine uploads the generated image to Discord", async () => {
-  const calls = mockFetch({ claude: () => assert.fail("no Claude call") });
-  const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
-  let modelInput;
-  const env = {
-    AI: {
-      run: async (model, input) => {
-        modelInput = { model, ...input };
-        return { image: fakeJpeg };
-      },
-    },
-  };
-  await imagine(interaction("imagine", [{ name: "prompt", value: "a cat on the LIRR" }]), env);
-
-  assert.equal(modelInput.model, "@cf/black-forest-labs/flux-1-schnell");
-  assert.equal(modelInput.prompt, "a cat on the LIRR");
-  const upload = lastEdit(calls);
-  assert.equal(upload.method, "PATCH");
-  assert.ok(upload.body instanceof FormData);
-  const payload = JSON.parse(upload.body.get("payload_json"));
-  assert.match(payload.content, /a cat on the LIRR/);
-  const file = upload.body.get("files[0]");
-  assert.equal(file.name, "imagine.jpg");
-  assert.equal(file.size, 4);
 });
 
 test("/roast only reads the target's messages and only pings them", async () => {

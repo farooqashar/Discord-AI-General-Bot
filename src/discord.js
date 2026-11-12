@@ -169,26 +169,6 @@ export function discordTimestamp(date, style = "F") {
   return `<t:${Math.floor(date.getTime() / 1000)}:${style}>`;
 }
 
-/** Replace the "thinking…" placeholder with a message that has a file attached. */
-export async function editOriginalWithFile(env, interaction, data, file) {
-  const url = `${API}/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
-  for (let attempt = 0; ; attempt++) {
-    const form = new FormData();
-    form.append(
-      "payload_json",
-      JSON.stringify({ ...data, attachments: [{ id: 0, filename: file.name }] }),
-    );
-    form.append("files[0]", new Blob([file.bytes], { type: file.type }), file.name);
-
-    const res = await fetch(url, { method: "PATCH", body: form });
-    if (res.ok) return res.json();
-    if ((res.status === 404 || res.status === 429) && attempt < 3) {
-      await sleep(res.status === 429 ? 1500 : 500);
-      continue;
-    }
-    throw new Error(`Uploading the file to Discord failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-  }
-}
 
 /** A row of link buttons (style 5) under a message. */
 export function linkButtons(buttons) {
