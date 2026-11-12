@@ -100,7 +100,7 @@ const DEFINITIONS = [
     description: "Get restaurant ideas for what you're craving",
     options: [
       { type: 3, name: "craving", description: 'e.g. "late-night ramen", "brunch"', required: true, max_length: 200 },
-      { type: 3, name: "area", description: "Where? Defaults to New York City", max_length: 100 },
+      { type: 3, name: "area", description: "Where? Leave blank to use the place in your craving, or New York City", max_length: 100 },
     ],
   },
   {
