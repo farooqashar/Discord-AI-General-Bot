@@ -198,7 +198,7 @@ test("users never see the AI provider or raw error details", async () => {
         headers: { "X-Signature-Ed25519": sig, "X-Signature-Timestamp": ts },
         body,
       }),
-      { DISCORD_PUBLIC_KEY: pub, BOT_NAME: "AshBot" },
+      { DISCORD_PUBLIC_KEY: pub, BOT_NAME: "Ashistant" },
       { waitUntil: (p) => (background = p) },
     );
     await background;
@@ -206,7 +206,7 @@ test("users never see the AI provider or raw error details", async () => {
     console.error = consoleError;
   }
 
-  assert.match(systemPrompt, /^You are AshBot/);
+  assert.match(systemPrompt, /^You are Ashistant/);
   assert.match(systemPrompt, /Don't mention which AI model or company/);
   const shown = lastEdit(calls).body.content;
   assert.equal(shown, "⚠️ Sorry, something went wrong. Please try again in a bit.");

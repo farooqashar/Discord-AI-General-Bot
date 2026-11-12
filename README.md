@@ -1,4 +1,4 @@
-# Discord AI General Bot
+# Ashistant (Discord AI General Bot)
 
 A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Workers, so there's no server to keep running and hosting is free. The only cost is Anthropic API usage, usually a fraction of a cent per command.
 

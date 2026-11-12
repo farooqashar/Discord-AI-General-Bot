@@ -6,7 +6,7 @@ export const DEFAULT_MODEL = "claude-haiku-5-5";
 
 /** Prepended to every prompt so replies never reveal the model or company behind the bot. */
 export function persona(env) {
-  const name = env.BOT_NAME || "AshBot";
+  const name = env.BOT_NAME || "Ashistant";
   return `You are ${name}, an AI assistant in a Discord server. Don't mention which AI model or company powers you, and don't call yourself by any other name. If someone asks what you are or who made you, just say you're ${name}, a bot for this server.`;
 }
 
