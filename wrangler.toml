@@ -11,7 +11,7 @@ BOT_NAME = "Ashistant v0.1"
 TIMEZONE = "America/New_York"
 # Which model answers. "claude-haiku-5-5" is fastest and cheapest,
 # "claude-sonnet-5-5" is a good middle ground, "claude-fable-5-2" is the most capable.
-CLAUDE_MODEL = "claude-fable-5-2"
+CLAUDE_MODEL = "claude-haiku-5-5"
 # Where /food looks when no area is given.
 DEFAULT_AREA = "New York, NY"
 # Your Discord Application ID (not a secret). Lets the bot re-register its
