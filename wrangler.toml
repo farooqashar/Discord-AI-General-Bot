@@ -1,26 +1,37 @@
 name = "discord-ai-general-bot"
 main = "src/index.js"
 compatibility_date = "2026-11-01"
+workers_dev = true
+preview_urls = false
 
 [vars]
 # Times like "tomorrow at 6pm" are read in this time zone.
 TIMEZONE = "America/New_York"
 # Fast and cheap. Swap for "claude-sonnet-5-5" if you want smarter answers.
 CLAUDE_MODEL = "claude-haiku-5-5"
+# Where /food looks when no area is given.
+DEFAULT_AREA = "New York, NY"
+# Your Discord Application ID (not a secret). Lets the bot re-register its
+# slash commands automatically after a deploy changes them.
+DISCORD_APP_ID = "1570256194399117313"
 
-# Stores pending /remind reminders.
+# Stores pending /remind reminders and the last registered command list.
 [[d1_databases]]
 binding = "DB"
 database_name = "discord-bot-reminders"
 database_id = "085d3339-6e82-453a-9f58-ad6925842875"
 migrations_dir = "migrations"
 
-# Check for due reminders every minute.
+# Cloudflare's built-in AI models, used by /imagine (free daily allowance).
+[ai]
+binding = "AI"
+
+# Every minute: post due reminders, and sync slash commands if they changed.
 [triggers]
 crons = ["* * * * *"]
 
 [observability]
 enabled = true
 
-# Secrets (set with `npx wrangler secret put NAME`, never committed):
+# Secrets (set in the Cloudflare dashboard under Settings → Variables and Secrets):
 #   DISCORD_PUBLIC_KEY, DISCORD_TOKEN, ANTHROPIC_API_KEY

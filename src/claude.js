@@ -63,3 +63,67 @@ export function describeNow(timeZone) {
   }).format(now);
   return `It is currently ${local} in the ${timeZone} time zone (UTC: ${now.toISOString()}).`;
 }
+
+/**
+ * Ask Claude to search the web and write an answer.
+ * Returns the final text (written after the last search) and the sources it cited.
+ */
+export async function webSearch(env, { system, prompt, maxSearches = 4, maxTokens = 2048, location }) {
+  const tool = { type: "web_search_20250305", name: "web_search", max_uses: maxSearches };
+  if (location) tool.user_location = { type: "approximate", ...location };
+
+  const messages = [{ role: "user", content: prompt }];
+  let response;
+  // Long searches can come back as "pause_turn"; send the partial answer
+  // back unchanged so Claude can continue where it left off.
+  for (let round = 0; round < 3; round++) {
+    response = await callClaude(env, { max_tokens: maxTokens, system, tools: [tool], messages });
+    if (response.stop_reason !== "pause_turn") break;
+    messages.push({ role: "assistant", content: response.content });
+  }
+
+  const blocks = response.content;
+  // Only keep the text written after the last search, which is the answer itself.
+  const lastSearch = blocks.findLastIndex((b) => b.type === "web_search_tool_result");
+  const answerBlocks = blocks.slice(lastSearch + 1).filter((b) => b.type === "text");
+  const text = answerBlocks.map((b) => b.text).join("").trim();
+
+  // Prefer the sources Claude actually cited; fall back to raw search results.
+  const sources = new Map();
+  for (const block of answerBlocks) {
+    for (const citation of block.citations ?? []) {
+      if (citation.url && !sources.has(citation.url)) sources.set(citation.url, citation.title);
+    }
+  }
+  if (sources.size === 0) {
+    for (const block of blocks) {
+      if (block.type !== "web_search_tool_result" || !Array.isArray(block.content)) continue;
+      for (const result of block.content) {
+        if (result.url && !sources.has(result.url)) sources.set(result.url, result.title);
+      }
+    }
+  }
+
+  return { text, sources: [...sources].map(([url, title]) => ({ url, title })) };
+}
+
+/** A numbered list of source links that Discord won't unfurl into big previews. */
+export function formatSources(sources, max = 8) {
+  if (!sources.length) return "";
+  const list = sources
+    .slice(0, max)
+    .map(({ url, title }, i) => {
+      let label = title;
+      if (!label) {
+        try {
+          label = new URL(url).hostname;
+        } catch {
+          label = url;
+        }
+      }
+      label = label.replace(/[[\]]/g, "").slice(0, 80);
+      return `${i + 1}. [${label}](<${url}>)`;
+    })
+    .join("\n");
+  return `**Sources**\n${list}`;
+}

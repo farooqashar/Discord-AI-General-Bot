@@ -1,22 +1,29 @@
 # Discord AI General Bot
 
-A small Discord bot with five Claude-powered slash commands. It runs on Cloudflare Workers, so there's no server to keep running and hosting is free. The only cost is Anthropic API usage, usually a fraction of a cent per command.
+A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Workers, so there's no server to keep running and hosting is free. The only cost is Anthropic API usage, usually a fraction of a cent per command.
 
 | Command | What it does |
 | --- | --- |
 | `/ask <question>` | Ask Claude anything; the answer posts in the channel. |
 | `/tldr [messages]` | Summarizes the last 50 messages (or 10–100) in the channel. |
-| `/event <details>` | "board game night Saturday 8pm at my place" becomes a real Discord scheduled event. |
+| `/event <details>` | "board game night Saturday 8pm at my place" becomes a real Discord scheduled event, with an **Add to Google Calendar** button. |
 | `/remind <reminder>` | "tomorrow at 6pm to book the restaurant" posts a reminder in the channel at that time. |
 | `/research <question>` | Searches the web and posts a short report with sources in a new thread. |
+| `/eli5 <topic>` | Explains anything like you're five. |
+| `/decide <options>` | "pizza, sushi, tacos": picks one at random, with a dramatic justification. |
+| `/trivia [topic]` | A multiple-choice trivia question with the answer hidden behind a spoiler. |
+| `/imagine <prompt>` | Generates an image with Cloudflare's free FLUX.1 Schnell model. |
+| `/food <craving> [area]` | Searches the web for 3–5 places to eat, with Google Maps links. Defaults to New York City. |
+| `/roast @user` | A friendly roast based on that person's recent messages in the channel. |
 
 ## How it works
 
-Discord sends each slash command to the Worker as an HTTP request. The Worker checks Discord's signature, immediately replies "thinking…", then calls the Claude API in the background and edits the reply with the result. `/research` uses Claude's built-in web search tool. Reminders are stored in a Cloudflare D1 database and a cron trigger checks for due ones every minute.
+Discord sends each slash command to the Worker as an HTTP request. The Worker checks Discord's signature, immediately replies "thinking…", then calls the Claude API in the background and edits the reply with the result. `/research` uses Claude's built-in web search tool. Reminders are stored in a Cloudflare D1 database and a cron trigger checks for due ones every minute. The same cron re-registers the slash commands whenever a deploy changes them, so new commands appear about a minute after you push. `/imagine` uses Cloudflare Workers AI instead of Claude, since Claude doesn't generate images.
 
 ```
 src/
-  index.js               Worker entry: routes commands, runs the reminder cron
+  index.js               Worker entry: routes commands, runs the every-minute cron
+  register.js            Keeps Discord's command list in sync
   discord.js             Signature check, Discord API calls, message splitting
   claude.js              Anthropic API wrapper and structured extraction
   command-definitions.js Slash command names, descriptions and options
@@ -58,12 +65,14 @@ Then try `/ask` in your server.
 
 - **Model:** set `CLAUDE_MODEL` in `wrangler.toml`. The default is `claude-haiku-5-5`; `claude-sonnet-5-5` gives stronger answers at a higher cost.
 - **Time zone** for `/event` and `/remind`: set `TIMEZONE` in `wrangler.toml`.
-- **New or changed commands:** edit `src/command-definitions.js`, add a handler in `src/commands/`, and wire it into `HANDLERS` in `src/index.js`. After it deploys, re-save the Interactions Endpoint URL in Discord to re-register the commands. (For local development, `npm run register` does the same from the terminal using `.dev.vars`.)
+- **New or changed commands:** edit `src/command-definitions.js`, add a handler in `src/commands/`, and wire it into `HANDLERS` in `src/index.js`. Push, and the bot registers the new commands within a minute of deploying. If Discord doesn't show them, restart the Discord app.
+- **Default `/food` area:** set `DEFAULT_AREA` in `wrangler.toml`.
 
 ## Costs and limits
 
 - **Cloudflare:** the free plan covers this easily (100,000 requests a day, plus D1 and cron triggers).
-- **Anthropic:** pay as you go. `/research` also pays a per-search fee and is capped at 4 searches per run. Set a monthly spend limit in the Anthropic Console.
+- **Anthropic:** pay as you go. `/research` and `/food` also pay a per-search fee (1¢ each), capped at 4 and 3 searches per run. Set a monthly spend limit in the Anthropic Console.
+- **Images:** `/imagine` runs on Workers AI's free daily allowance. On the free plan, going past it makes `/imagine` fail until the next day; it never charges you.
 - **Research time:** background work on Workers gets about 30 seconds after the "thinking…" reply. A capped research run normally fits; if very long questions get cut off, move `/research` to a Cloudflare Workflow.
 - **Message length:** Discord messages max out at 2,000 characters, so long answers are split across several messages.
 - This bot only responds to slash commands. Replying to @mentions or watching every message would need an always-on bot connected to Discord's gateway.

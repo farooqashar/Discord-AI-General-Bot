@@ -1,5 +1,37 @@
 import { describeNow, extractStructured } from "../claude.js";
-import { discordApi, discordTimestamp, getOption, replyWithText } from "../discord.js";
+import {
+  NO_MENTIONS,
+  discordApi,
+  discordTimestamp,
+  editOriginal,
+  getOption,
+  linkButtons,
+  replyWithText,
+} from "../discord.js";
+
+// Google Calendar's "add event" page, prefilled. Times are UTC: 20261114T010000Z.
+const gcalTime = (date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+
+export function googleCalendarUrl({ name, start, end, location, details }) {
+  const build = (detailsText) => {
+    const params = new URLSearchParams({
+      action: "TEMPLATE",
+      text: name,
+      dates: `${gcalTime(start)}/${gcalTime(end)}`,
+    });
+    if (location) params.set("location", location);
+    if (detailsText) params.set("details", detailsText);
+    return `https://calendar.google.com/calendar/render?${params}`;
+  };
+  // Discord buttons allow URLs up to 512 characters; trim the description to fit.
+  let text = details || "";
+  let url = build(text);
+  while (url.length > 512 && text.length > 0) {
+    text = text.slice(0, Math.max(0, text.length - 40));
+    url = build(text ? `${text}…` : "");
+  }
+  return url.length <= 512 ? url : null;
+}
 
 const SCHEMA = {
   type: "object",
@@ -73,12 +105,24 @@ Interpret times in ${timeZone} unless another zone is stated. Relative days like
     },
   });
 
-  await replyWithText(
-    env,
-    interaction,
-    `📅 Created **${created.name}**\n` +
+  const eventUrl = `https://discord.com/events/${interaction.guild_id}/${created.id}`;
+  const gcalUrl = googleCalendarUrl({
+    name: created.name,
+    start,
+    end,
+    location: location === "TBD" ? "" : location,
+    details: parsed.description || "",
+  });
+
+  const buttons = [{ label: "View in Discord", url: eventUrl, emoji: "🎟️" }];
+  if (gcalUrl) buttons.unshift({ label: "Add to Google Calendar", url: gcalUrl, emoji: "📅" });
+
+  await editOriginal(env, interaction, {
+    content:
+      `📅 Created **${created.name}**\n` +
       `🕒 ${discordTimestamp(start)} (${discordTimestamp(start, "R")})\n` +
-      `📍 ${location}\n` +
-      `https://discord.com/events/${interaction.guild_id}/${created.id}`,
-  );
+      `📍 ${location}`,
+    components: linkButtons(buttons),
+    allowed_mentions: NO_MENTIONS,
+  });
 }
