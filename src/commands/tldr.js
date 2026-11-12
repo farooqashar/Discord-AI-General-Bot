@@ -1,12 +1,11 @@
 import { callClaude, textOf } from "../claude.js";
 import { discordApi, getOption, replyWithText } from "../discord.js";
 
-const SYSTEM = `You summarize Discord conversations for people catching up.
-Write a short summary in Discord markdown, under 200 words:
-- a one-line overview
-- bullet points for the main topics, with who said what when it matters
-- any decisions made, and any open questions or to-dos
-Refer to people by the names shown. Never use @everyone or @here.`;
+const SYSTEM = `You summarize Discord conversations for people catching up. Be brief.
+Reply in Discord markdown, under 60 words total:
+- one line on what the chat was about
+- then at most 3 short bullets for the key points, decisions or to-dos (skip any that don't matter)
+No headings, no filler, no intro. Refer to people by the names shown. Never use @everyone or @here.`;
 
 export async function tldr(interaction, env) {
   const count = getOption(interaction, "messages") ?? 50;
@@ -42,6 +41,6 @@ export async function tldr(interaction, env) {
   await replyWithText(
     env,
     interaction,
-    `📝 **TL;DR of the last ${lines.length} messages**\n\n${textOf(message)}`,
+    `📝 **TL;DR** (${lines.length} messages)\n${textOf(message)}`,
   );
 }
