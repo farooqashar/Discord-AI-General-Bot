@@ -1,11 +1,10 @@
 import { callClaude, textOf } from "../claude.js";
 import { discordApi, getOption, replyWithText } from "../discord.js";
 
-const SYSTEM = `You summarize Discord conversations for people catching up. Be brief.
-Reply in Discord markdown, under 60 words total:
-- one line on what the chat was about
-- then at most 3 short bullets for the key points, decisions or to-dos (skip any that don't matter)
-No headings, no filler, no intro. Refer to people by the names shown. Never use @everyone or @here.`;
+const SYSTEM = `You summarize Discord conversations for people catching up.
+Explain what the chat was about in 1–2 plain, casual sentences (under 50 words).
+No bullet points, headings, lists or intro. Mention people by the names shown only when it helps.
+Never use @everyone or @here.`;
 
 export async function tldr(interaction, env) {
   const count = getOption(interaction, "messages") ?? 50;
