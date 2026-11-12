@@ -131,8 +131,20 @@ const DEFINITIONS = [
   },
   {
     name: "roast",
-    description: "A friendly roast of someone, based on their recent messages",
-    options: [{ type: 6, name: "user", description: "Who should get roasted?", required: true }],
+    description: "Roast someone, based on their recent messages",
+    options: [
+      { type: 6, name: "user", description: "Who should get roasted?", required: true },
+      {
+        type: 3,
+        name: "heat",
+        description: "How hard? Defaults to spicy",
+        choices: [
+          { name: "🔥 mild", value: "mild" },
+          { name: "🔥🔥 spicy", value: "spicy" },
+          { name: "🔥🔥🔥 savage", value: "savage" },
+        ],
+      },
+    ],
   },
 ];
 

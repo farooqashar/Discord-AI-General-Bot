@@ -15,7 +15,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/food <craving> [area]` | Searches the web for 3–5 places to eat, with Google Maps links. Defaults to New York City. |
 | `/summarize <link>` | Reads a web page or PDF and posts a short TL;DR with a "worth reading?" verdict. |
 | `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (10–500) and reports its mood, topics, running jokes, most active people and peak hour. |
-| `/roast @user` | A friendly roast based on that person's recent messages in the channel. |
+| `/roast @user [heat]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
 
 ## How it works
 

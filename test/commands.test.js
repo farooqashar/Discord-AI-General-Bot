@@ -162,7 +162,7 @@ test("/roast only reads the target's messages and only pings them", async () => 
   assert.doesNotMatch(prompt, /secret stuff/);
   const edit = lastEdit(calls).body;
   assert.deepEqual(edit.allowed_mentions, { users: ["friend"] });
-  assert.match(edit.content, /<@friend>/);
+  assert.match(edit.content, /^🔥🔥 <@friend>/);
 });
 
 test("re-registers commands only when they changed since last time", async () => {
@@ -186,4 +186,26 @@ test("re-registers commands only when they changed since last time", async () =>
 
   await syncCommandsIfChanged(env);
   assert.equal(calls.length, 1, "no second registration when nothing changed");
+});
+
+test("/roast heat levels change the prompt but keep the hard limits", async () => {
+  const systems = {};
+  for (const heat of ["mild", "savage"]) {
+    mockFetch({
+      claude: (body) => {
+        systems[heat] = body.system;
+        return { content: [{ type: "text", text: "roasted" }] };
+      },
+      discord: (url) => (url.includes("messages?limit=100") ? [] : { id: "m" }),
+    });
+    await roast(
+      interaction("roast", [{ name: "user", value: "friend" }, { name: "heat", value: heat }], {
+        resolved: { users: { friend: { id: "friend", username: "sam" } } },
+      }),
+      {},
+    );
+  }
+  assert.match(systems.mild, /affectionate/);
+  assert.match(systems.savage, /brutal/);
+  for (const s of Object.values(systems)) assert.match(s, /Never joke about race, ethnicity, religion/);
 });
