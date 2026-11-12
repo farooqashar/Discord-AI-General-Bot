@@ -12,7 +12,7 @@ CLAUDE_MODEL = "claude-haiku-5-5"
 [[d1_databases]]
 binding = "DB"
 database_name = "discord-bot-reminders"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "085d3339-6e82-453a-9f58-ad6925842875"
 migrations_dir = "migrations"
 
 # Check for due reminders every minute.

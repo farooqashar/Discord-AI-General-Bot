@@ -7,16 +7,26 @@ import { event } from "./commands/event.js";
 import { postDueReminders, remind } from "./commands/remind.js";
 import { research } from "./commands/research.js";
 import { tldr } from "./commands/tldr.js";
+import { COMMANDS } from "./command-definitions.js";
 import {
   EPHEMERAL,
   InteractionType,
   NO_MENTIONS,
   ResponseType,
+  discordApi,
   editOriginal,
   verifyDiscordRequest,
 } from "./discord.js";
 
 const HANDLERS = { ask, tldr, event, remind, research };
+
+async function registerCommands(env, applicationId) {
+  const registered = await discordApi(env, `/applications/${applicationId}/commands`, {
+    method: "PUT",
+    body: COMMANDS,
+  });
+  console.log(`Registered ${registered.length} slash commands`);
+}
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -44,7 +54,14 @@ export default {
     const interaction = JSON.parse(body);
 
     // Discord pings the endpoint when you save it in the developer portal.
+    // We use that moment to (re)register the slash commands, so there's no
+    // separate setup step. Re-registering the same commands is harmless.
     if (interaction.type === InteractionType.PING) {
+      ctx.waitUntil(
+        registerCommands(env, interaction.application_id).catch((err) =>
+          console.error("Registering slash commands failed:", err),
+        ),
+      );
       return json({ type: ResponseType.PONG });
     }
 

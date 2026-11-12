@@ -1,7 +1,8 @@
-// Slash command definitions. Shared by the Worker and the register script.
+// Slash command definitions. The Worker registers these with Discord
+// automatically whenever you save the Interactions Endpoint URL.
 // Option types: 3 = text, 4 = whole number.
 
-export const COMMANDS = [
+const DEFINITIONS = [
   {
     name: "ask",
     description: "Ask Claude anything",
@@ -68,3 +69,10 @@ export const COMMANDS = [
     ],
   },
 ];
+
+// Installed to servers only (not personal DMs), usable in server channels.
+export const COMMANDS = DEFINITIONS.map((command) => ({
+  ...command,
+  integration_types: [0],
+  contexts: [0],
+}));

@@ -36,16 +36,36 @@ test("accepts a correctly signed request and rejects a tampered one", async () =
   assert.equal((await verifyDiscordRequest(forged, publicKeyHex)).valid, false);
 });
 
-test("answers Discord's PING and rejects unsigned requests", async () => {
+test("answers Discord's PING, registers the commands, and rejects unsigned requests", async () => {
   const { privateKey, publicKeyHex } = await makeKeys();
-  const env = { DISCORD_PUBLIC_KEY: publicKeyHex };
-  const ctx = { waitUntil() {} };
+  const env = { DISCORD_PUBLIC_KEY: publicKeyHex, DISCORD_TOKEN: "bot-token" };
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return Response.json(JSON.parse(init.body));
+  };
 
-  const res = await worker.fetch(await signedRequest(privateKey, { type: 1 }), env, ctx);
-  assert.deepEqual(await res.json(), { type: 1 });
+  try {
+    let background;
+    const ctx = { waitUntil: (p) => (background = p) };
+    const ping = { type: 1, application_id: "app123" };
+    const res = await worker.fetch(await signedRequest(privateKey, ping), env, ctx);
+    assert.deepEqual(await res.json(), { type: 1 });
+    await background;
 
-  const unsigned = new Request("https://bot.example/", { method: "POST", body: "{}" });
-  assert.equal((await worker.fetch(unsigned, env, ctx)).status, 401);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://discord.com/api/v10/applications/app123/commands");
+    assert.equal(calls[0].init.method, "PUT");
+    assert.equal(calls[0].init.headers.Authorization, "Bot bot-token");
+    const names = JSON.parse(calls[0].init.body).map((c) => c.name);
+    assert.deepEqual(names, ["ask", "tldr", "event", "remind", "research"]);
+
+    const unsigned = new Request("https://bot.example/", { method: "POST", body: "{}" });
+    assert.equal((await worker.fetch(unsigned, env, ctx)).status, 401);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("defers a slash command and edits the reply with Claude's answer", async () => {

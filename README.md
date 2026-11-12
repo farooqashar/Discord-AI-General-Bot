@@ -27,13 +27,13 @@ migrations/                    D1 table for reminders
 
 ## Setup
 
-You need Node 20+, a Cloudflare account, and an Anthropic API key.
+Everything is done in the Cloudflare and Discord dashboards; no terminal needed. You need a Cloudflare account and an Anthropic API key. The reminders database (`discord-bot-reminders`) already exists and is set in `wrangler.toml`.
 
 ### 1. Create the Discord app
 
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and click **New Application**.
 2. On **General Information**, copy the **Application ID** and **Public Key**.
-3. On **Bot**, click **Reset Token** and copy the token. Turn on **Message Content Intent** (needed for `/tldr`).
+3. On **Bot**, click **Reset Token** and copy the token. Turn on **Message Content Intent** (needed for `/tldr`) and save.
 4. Invite the bot to your server by opening this URL with your Application ID filled in:
 
    ```
@@ -42,48 +42,23 @@ You need Node 20+, a Cloudflare account, and an Anthropic API key.
 
    That grants View Channels, Send Messages, Read Message History, Create Public Threads, Send Messages in Threads, and Create/Manage Events.
 
-### 2. Configure and register commands
+### 2. Deploy on Cloudflare
 
-```bash
-npm install
-cp .dev.vars.example .dev.vars   # then fill in the values
-npm run register                 # adds the slash commands to your server
-```
+1. In the Cloudflare dashboard, go to **Workers & Pages → Create → Import a repository** and pick this repo. Keep the default build settings and deploy. It redeploys on every push to `main`, and sets up the every-minute reminder check.
+2. Open the Worker → **Settings → Variables and Secrets** and add three **Secrets**: `DISCORD_PUBLIC_KEY`, `DISCORD_TOKEN`, `ANTHROPIC_API_KEY`.
+3. Copy the Worker's URL from its overview page (for example `https://discord-ai-general-bot.<you>.workers.dev`).
 
-### 3. Create the reminders database
+### 3. Connect Discord to the Worker
 
-```bash
-npx wrangler login
-npx wrangler d1 create discord-bot-reminders
-```
+Back on the app's **General Information** page in Discord, paste the Worker URL into **Interactions Endpoint URL** and save. Discord pings the URL to check it, and the bot uses that ping to register its slash commands. They can take a minute to appear; if they don't show up, restart Discord.
 
-Paste the `database_id` it prints into `wrangler.toml`, then:
-
-```bash
-npm run db:migrate
-```
-
-### 4. Add secrets and deploy
-
-```bash
-npx wrangler secret put DISCORD_PUBLIC_KEY
-npx wrangler secret put DISCORD_TOKEN
-npx wrangler secret put ANTHROPIC_API_KEY
-npm run deploy
-```
-
-### 5. Point Discord at the Worker
-
-Copy the Worker URL that `deploy` prints (for example `https://discord-ai-general-bot.<you>.workers.dev`) into **Interactions Endpoint URL** on the app's **General Information** page and save. Discord pings the URL to check the signature verification before it saves.
-
-Try `/ask` in your server.
+Then try `/ask` in your server.
 
 ## Changing things
 
 - **Model:** set `CLAUDE_MODEL` in `wrangler.toml`. The default is `claude-haiku-5-5`; `claude-sonnet-5-5` gives stronger answers at a higher cost.
 - **Time zone** for `/event` and `/remind`: set `TIMEZONE` in `wrangler.toml`.
-- **New or changed commands:** edit `src/command-definitions.js`, add a handler in `src/commands/`, wire it into `HANDLERS` in `src/index.js`, then run `npm run register` and `npm run deploy`.
-- **Auto-deploy:** connect this repo in the Cloudflare dashboard (Workers → your Worker → Settings → Builds) to deploy on every push to `main`.
+- **New or changed commands:** edit `src/command-definitions.js`, add a handler in `src/commands/`, and wire it into `HANDLERS` in `src/index.js`. After it deploys, re-save the Interactions Endpoint URL in Discord to re-register the commands. (For local development, `npm run register` does the same from the terminal using `.dev.vars`.)
 
 ## Costs and limits
 
