@@ -11,8 +11,10 @@ import { food } from "./commands/food.js";
 import { postDueReminders, remind } from "./commands/remind.js";
 import { research } from "./commands/research.js";
 import { roast } from "./commands/roast.js";
+import { summarize } from "./commands/summarize.js";
 import { tldr } from "./commands/tldr.js";
 import { trivia } from "./commands/trivia.js";
+import { vibeCheck } from "./commands/vibe-check.js";
 import {
   EPHEMERAL,
   InteractionType,
@@ -33,6 +35,8 @@ export const HANDLERS = {
   decide,
   trivia,
   food,
+  summarize,
+  "vibe-check": vibeCheck,
   roast,
 };
 

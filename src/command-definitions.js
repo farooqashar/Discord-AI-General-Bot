@@ -1,6 +1,6 @@
 // Slash command definitions. The Worker registers these with Discord
 // automatically whenever you save the Interactions Endpoint URL.
-// Option types: 3 = text, 4 = whole number, 6 = user.
+// Option types: 3 = text, 4 = whole number, 6 = user, 7 = channel.
 
 const DEFINITIONS = [
   {
@@ -101,6 +101,32 @@ const DEFINITIONS = [
     options: [
       { type: 3, name: "craving", description: 'e.g. "late-night ramen", "brunch"', required: true, max_length: 200 },
       { type: 3, name: "area", description: "Where? Defaults to New York City", max_length: 100 },
+    ],
+  },
+  {
+    name: "summarize",
+    description: "Get a quick TL;DR of a web page or article",
+    options: [
+      { type: 3, name: "link", description: "The URL to summarize", required: true, max_length: 250 },
+    ],
+  },
+  {
+    name: "vibe-check",
+    description: "Read the mood and personality of a channel from its history",
+    options: [
+      {
+        type: 7,
+        name: "channel",
+        description: "Which channel? Defaults to this one",
+        channel_types: [0, 5, 11],
+      },
+      {
+        type: 4,
+        name: "messages",
+        description: "How many recent messages to read (50–500, default 200)",
+        min_value: 50,
+        max_value: 500,
+      },
     ],
   },
   {

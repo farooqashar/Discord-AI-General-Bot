@@ -13,6 +13,8 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/decide <options>` | "pizza, sushi, tacos": picks one at random, with a dramatic justification. |
 | `/trivia [topic]` | A multiple-choice trivia question with the answer hidden behind a spoiler. |
 | `/food <craving> [area]` | Searches the web for 3–5 places to eat, with Google Maps links. Defaults to New York City. |
+| `/summarize <link>` | Reads a web page or PDF and posts a short TL;DR with a "worth reading?" verdict. |
+| `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (50–500) and reports its mood, topics, running jokes, most active people and peak hour. |
 | `/roast @user` | A friendly roast based on that person's recent messages in the channel. |
 
 ## How it works
