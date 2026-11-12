@@ -11,6 +11,9 @@ export const ResponseType = {
 };
 export const EPHEMERAL = 1 << 6;
 
+/** An error whose message is friendly and safe to show in Discord. */
+export class UserFacingError extends Error {}
+
 // Never let AI-written text ping @everyone, roles or users by accident.
 export const NO_MENTIONS = { parse: [] };
 

@@ -5,6 +5,8 @@ workers_dev = true
 preview_urls = false
 
 [vars]
+# The name the bot uses for itself in replies.
+BOT_NAME = "AshBot"
 # Times like "tomorrow at 6pm" are read in this time zone.
 TIMEZONE = "America/New_York"
 # Fast and cheap. Swap for "claude-sonnet-5-5" if you want smarter answers.

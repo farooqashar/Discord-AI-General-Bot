@@ -5,7 +5,7 @@
 const DEFINITIONS = [
   {
     name: "ask",
-    description: "Ask Claude anything",
+    description: "Ask anything",
     options: [
       {
         type: 3,

@@ -1,5 +1,6 @@
 import { describeNow, extractStructured } from "../claude.js";
 import {
+  UserFacingError,
   discordTimestamp,
   getOption,
   invokingUser,
@@ -48,7 +49,7 @@ If only a day is given with no time, use 9:00 AM.`,
   }
 
   const due = new Date(parsed.remind_at);
-  if (Number.isNaN(due.getTime())) throw new Error(`Couldn't understand the time "${parsed.remind_at}"`);
+  if (Number.isNaN(due.getTime())) throw new UserFacingError("I couldn't figure out when that is. Try something like \"tomorrow at 6pm\".");
   if (due.getTime() < Date.now()) {
     await replyWithText(env, interaction, `🤔 That time (${discordTimestamp(due)}) is already in the past.`);
     return;

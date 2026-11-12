@@ -66,6 +66,7 @@ Then try `/ask` in your server.
 
 - **Model:** set `CLAUDE_MODEL` in `wrangler.toml`. The default is `claude-haiku-5-5`; `claude-sonnet-5-5` gives stronger answers at a higher cost.
 - **Time zone** for `/event` and `/remind`: set `TIMEZONE` in `wrangler.toml`.
+- **Bot name:** set `BOT_NAME` in `wrangler.toml`. Replies use this name and never mention the underlying AI model or company. Error details go to the Cloudflare logs; Discord only shows a friendly message.
 - **New or changed commands:** edit `src/command-definitions.js`, add a handler in `src/commands/`, and wire it into `HANDLERS` in `src/index.js`. Push, and the bot registers the new commands within a minute of deploying. If Discord doesn't show them, restart the Discord app.
 - **Default `/food` area:** set `DEFAULT_AREA` in `wrangler.toml`.
 

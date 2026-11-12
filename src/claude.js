@@ -4,7 +4,14 @@ const API_URL = "https://api.anthropic.com/v1/messages";
 const API_VERSION = "2023-06-01";
 export const DEFAULT_MODEL = "claude-haiku-5-5";
 
+/** Prepended to every prompt so replies never reveal the model or company behind the bot. */
+export function persona(env) {
+  const name = env.BOT_NAME || "AshBot";
+  return `You are ${name}, an AI assistant in a Discord server. Don't mention which AI model or company powers you, and don't call yourself by any other name. If someone asks what you are or who made you, just say you're ${name}, a bot for this server.`;
+}
+
 export async function callClaude(env, body) {
+  body = { ...body, system: body.system ? `${persona(env)}\n\n${body.system}` : persona(env) };
   const res = await fetch(API_URL, {
     method: "POST",
     headers: {
@@ -16,7 +23,7 @@ export async function callClaude(env, body) {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Claude API error (${res.status}): ${text.slice(0, 300)}`);
+    throw new Error(`AI request failed (${res.status}): ${text.slice(0, 300)}`);
   }
   return res.json();
 }
@@ -44,7 +51,7 @@ export async function extractStructured(env, { system, prompt, toolName, descrip
     tool_choice: { type: "tool", name: toolName },
   });
   const call = message.content.find((block) => block.type === "tool_use");
-  if (!call) throw new Error("Claude didn't return structured details");
+  if (!call) throw new Error("AI response was missing structured details");
   return call.input;
 }
 

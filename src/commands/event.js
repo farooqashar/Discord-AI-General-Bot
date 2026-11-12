@@ -1,6 +1,7 @@
 import { describeNow, extractStructured } from "../claude.js";
 import {
   NO_MENTIONS,
+  UserFacingError,
   discordApi,
   discordTimestamp,
   editOriginal,
@@ -83,7 +84,7 @@ Interpret times in ${timeZone} unless another zone is stated. Relative days like
   }
 
   const start = new Date(parsed.start_time);
-  if (Number.isNaN(start.getTime())) throw new Error(`Couldn't understand the start time "${parsed.start_time}"`);
+  if (Number.isNaN(start.getTime())) throw new UserFacingError("I couldn't figure out when that is. Try including a day and time.");
   if (start.getTime() < Date.now()) {
     await replyWithText(env, interaction, `🤔 That time (${discordTimestamp(start)}) is already in the past.`);
     return;

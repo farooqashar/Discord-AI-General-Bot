@@ -153,3 +153,61 @@ test("/vibe-check refuses a channel the user can't read", async () => {
   assert.match(lastEdit(calls).body.content, /only vibe-check channels you can read/);
   assert.ok(!calls.some((c) => c.url.includes("/channels/secret/messages")));
 });
+
+test("users never see the AI provider or raw error details", async () => {
+  const { default: worker } = await import("../src/index.js");
+  const { COMMANDS } = await import("../src/command-definitions.js");
+  const visible = JSON.stringify(COMMANDS);
+  assert.doesNotMatch(visible, /claude|anthropic|haiku|sonnet|opus/i);
+
+  // A failing API call shows only a generic message.
+  const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const pub = Buffer.from(await crypto.subtle.exportKey("raw", keys.publicKey)).toString("hex");
+  const body = JSON.stringify({
+    type: 2,
+    application_id: "app",
+    token: "tok",
+    channel_id: "chan",
+    data: { name: "ask", options: [{ name: "question", value: "hi" }] },
+  });
+  const ts = "1";
+  const sig = Buffer.from(
+    await crypto.subtle.sign("Ed25519", keys.privateKey, new TextEncoder().encode(ts + body)),
+  ).toString("hex");
+
+  // Claude rejects the key; Discord calls are recorded.
+  let systemPrompt;
+  const calls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if (url.includes("anthropic")) {
+      systemPrompt = JSON.parse(init.body).system;
+      return new Response('{"error":{"message":"invalid x-api-key"}}', { status: 401 });
+    }
+    calls.push({ url, body: JSON.parse(init.body) });
+    return Response.json({ id: "1" });
+  };
+
+  let background;
+  const consoleError = console.error;
+  console.error = () => {};
+  try {
+    await worker.fetch(
+      new Request("https://bot.example/", {
+        method: "POST",
+        headers: { "X-Signature-Ed25519": sig, "X-Signature-Timestamp": ts },
+        body,
+      }),
+      { DISCORD_PUBLIC_KEY: pub, BOT_NAME: "AshBot" },
+      { waitUntil: (p) => (background = p) },
+    );
+    await background;
+  } finally {
+    console.error = consoleError;
+  }
+
+  assert.match(systemPrompt, /^You are AshBot/);
+  assert.match(systemPrompt, /Don't mention which AI model or company/);
+  const shown = lastEdit(calls).body.content;
+  assert.equal(shown, "⚠️ Sorry, something went wrong. Please try again in a bit.");
+});

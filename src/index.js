@@ -20,6 +20,7 @@ import {
   InteractionType,
   NO_MENTIONS,
   ResponseType,
+  UserFacingError,
   editOriginal,
   verifyDiscordRequest,
 } from "./discord.js";
@@ -40,6 +41,12 @@ export const HANDLERS = {
   roast,
 };
 
+function friendlyError(err) {
+  if (err instanceof UserFacingError) return err.message;
+  if (err.status === 403) return "I don't have permission to do that here. Ask a server admin to check my role's permissions.";
+  return "Sorry, something went wrong. Please try again in a bit.";
+}
+
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
@@ -47,9 +54,10 @@ async function runCommand(handler, interaction, env) {
   try {
     await handler(interaction, env);
   } catch (err) {
+    // Full details go to the Cloudflare logs; Discord only gets a friendly message.
     console.error(`/${interaction.data.name} failed:`, err);
     await editOriginal(env, interaction, {
-      content: `⚠️ Sorry, something went wrong: ${String(err.message).slice(0, 300)}`,
+      content: `⚠️ ${friendlyError(err)}`,
       allowed_mentions: NO_MENTIONS,
     }).catch((e) => console.error("Couldn't report the error to Discord:", e));
   }
@@ -57,7 +65,7 @@ async function runCommand(handler, interaction, env) {
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === "GET") return new Response("Discord AI bot is running 🤖");
+    if (request.method === "GET") return new Response("OK");
     if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
     const { valid, body } = await verifyDiscordRequest(request, env.DISCORD_PUBLIC_KEY);
