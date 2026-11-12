@@ -5,7 +5,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | Command | What it does |
 | --- | --- |
 | `/ask <question>` | Ask Claude anything; the answer posts in the channel. |
-| `/tldr [messages]` | Summarizes the last 50 messages (or 10–100) in the channel. |
+| `/tldr [messages]` | Summarizes the last 50 messages (or 2–100) in the channel. |
 | `/event <details>` | "board game night Saturday 8pm at my place" becomes a real Discord scheduled event, with an **Add to Google Calendar** button. |
 | `/remind <reminder>` | "tomorrow at 6pm to book the restaurant" posts a reminder in the channel at that time. |
 | `/research <question>` | Searches the web and posts a short report with sources in a new thread. |
@@ -14,7 +14,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/trivia [topic]` | A multiple-choice trivia question with the answer hidden behind a spoiler. |
 | `/food <craving> [area]` | Searches the web for 3–5 places to eat, with Google Maps links. Defaults to New York City. |
 | `/summarize <link>` | Reads a web page or PDF and posts a short TL;DR with a "worth reading?" verdict. |
-| `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (50–500) and reports its mood, topics, running jokes, most active people and peak hour. |
+| `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (10–500) and reports its mood, topics, running jokes, most active people and peak hour. |
 | `/roast @user` | A friendly roast based on that person's recent messages in the channel. |
 
 ## How it works

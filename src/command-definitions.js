@@ -23,8 +23,8 @@ const DEFINITIONS = [
       {
         type: 4,
         name: "messages",
-        description: "How many recent messages to read (10–100, default 50)",
-        min_value: 10,
+        description: "How many recent messages to read (2–100, default 50)",
+        min_value: 2,
         max_value: 100,
       },
     ],
@@ -123,8 +123,8 @@ const DEFINITIONS = [
       {
         type: 4,
         name: "messages",
-        description: "How many recent messages to read (50–500, default 200)",
-        min_value: 50,
+        description: "How many recent messages to read (10–500, default 200)",
+        min_value: 10,
         max_value: 500,
       },
     ],

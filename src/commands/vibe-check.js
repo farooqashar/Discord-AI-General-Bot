@@ -106,7 +106,7 @@ export async function vibeCheck(interaction, env) {
 
   const history = await fetchHistory(env, channelId, count);
   const messages = history.filter((m) => !m.author?.bot && m.content?.trim()).reverse();
-  if (messages.length < 5) {
+  if (messages.length < 2) {
     await editOriginal(env, interaction, {
       content: "🤷 Not enough conversation there yet to read the vibe.",
       allowed_mentions: NO_MENTIONS,
