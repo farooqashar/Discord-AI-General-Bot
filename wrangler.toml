@@ -6,7 +6,7 @@ preview_urls = false
 
 [vars]
 # The name the bot uses for itself in replies.
-BOT_NAME = "Ashistant"
+BOT_NAME = "Ashistant v0.1"
 # Times like "tomorrow at 6pm" are read in this time zone.
 TIMEZONE = "America/New_York"
 # Which model answers. "claude-haiku-5-5" is fastest and cheapest,
