@@ -1,5 +1,5 @@
 import { extractStructured } from "../claude.js";
-import { NO_MENTIONS, discordApi, editOriginal, getOption, targetChannel } from "../discord.js";
+import { NO_MENTIONS, editOriginal, fetchHistory, getOption, targetChannel } from "../discord.js";
 
 const SCHEMA = {
   type: "object",
@@ -30,23 +30,6 @@ const SYSTEM = `You do a playful "vibe check" of a Discord channel from its mess
 Describe the mood, energy and personality of the conversation, not a play-by-play.
 Keep it fun and kind: tease the group lightly, but never single anyone out negatively,
 and don't mention anything that seems private or sensitive.`;
-
-/** Fetch up to `count` recent messages, newest first, paging 100 at a time. */
-async function fetchHistory(env, channelId, count) {
-  const all = [];
-  let before;
-  while (all.length < count) {
-    const limit = Math.min(100, count - all.length);
-    const page = await discordApi(
-      env,
-      `/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ""}`,
-    );
-    all.push(...page);
-    if (page.length < limit) break;
-    before = page[page.length - 1].id;
-  }
-  return all;
-}
 
 const meter = (n, left, right) => `${left} ${"●".repeat(n)}${"○".repeat(5 - n)} ${right}`;
 const clamp = (n) => Math.min(5, Math.max(1, Math.round(n) || 3));

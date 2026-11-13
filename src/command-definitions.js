@@ -24,12 +24,17 @@ const DEFINITIONS = [
   },
   {
     name: "tldr",
-    description: "Summarize the recent conversation in this channel",
+    description: "Summarize a channel's recent chat, or what one person has been saying",
     options: [
+      {
+        type: 6,
+        name: "user",
+        description: "Only summarize this person's messages",
+      },
       {
         type: 4,
         name: "messages",
-        description: "How many recent messages to read (2–100, default 50)",
+        description: "How many messages to summarize (2–100, default 50)",
         min_value: 2,
         max_value: 100,
       },

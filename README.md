@@ -5,7 +5,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | Command | What it does |
 | --- | --- |
 | `/ask <question> [channel]` | Ask anything. Reads the last 20 messages first, so follow-ups like "wdym?" work; point it at another channel to ask about that chat. |
-| `/tldr [messages] [channel]` | A couple of plain sentences on what a channel has been talking about (last 50 messages, or 2–100). |
+| `/tldr [user] [messages] [channel]` | A couple of plain sentences on what a channel has been talking about (last 50 messages, or 2–100). Pick a user to summarize just what they've been saying (searches the last 500 messages). |
 | `/event <details>` | "board game night Saturday 8pm at my place" becomes a real Discord scheduled event, with an **Add to Google Calendar** button. |
 | `/remind <reminder>` | "tomorrow at 6pm to book the restaurant" posts a reminder in the channel at that time. |
 | `/research <question>` | Searches the web and posts a short report with sources in a new thread. |

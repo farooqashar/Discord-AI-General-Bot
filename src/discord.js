@@ -218,3 +218,20 @@ export function channelLabel(interaction, channelId) {
 export function authorName(message) {
   return message.member?.nick ?? message.author?.global_name ?? message.author?.username ?? "someone";
 }
+
+/** Fetch up to `count` recent messages, newest first, paging 100 at a time. */
+export async function fetchHistory(env, channelId, count) {
+  const all = [];
+  let before;
+  while (all.length < count) {
+    const limit = Math.min(100, count - all.length);
+    const page = await discordApi(
+      env,
+      `/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ""}`,
+    );
+    all.push(...page);
+    if (page.length < limit) break;
+    before = page[page.length - 1].id;
+  }
+  return all;
+}

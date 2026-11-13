@@ -173,3 +173,47 @@ test("/weather explains when a place can't be found", async () => {
   mock([["geocoding-api", () => ({})]]);
   await assert.rejects(weather(interaction("weather", [{ name: "place", value: "Atlantis" }]), {}), /couldn't find a place called "Atlantis"/);
 });
+
+test("/tldr with a user summarizes only that person's messages, looking further back", async () => {
+  // 150 messages across two pages; sam's are spread out.
+  const msg = (i) => ({
+    id: String(1000 - i),
+    content: i % 10 === 0 ? `sam message ${i}` : `other ${i}`,
+    timestamp: "2026-11-13T14:00:00Z",
+    author: i % 10 === 0 ? { id: "sam", username: "sam" } : { id: "jo", username: "jo" },
+  });
+  const page1 = Array.from({ length: 100 }, (_, i) => msg(i));
+  const page2 = Array.from({ length: 50 }, (_, i) => msg(i + 100));
+  let request;
+  const calls = mock([
+    ["anthropic", (_u, init) => {
+      request = JSON.parse(init.body);
+      return { content: [{ type: "text", text: "Sam keeps talking about trains." }] };
+    }],
+    ["before=", () => page2],
+    ["/channels/bot-channel/messages", () => page1],
+  ]);
+
+  await tldr(interaction("tldr", [{ name: "user", value: "sam" }]), {});
+
+  const fetches = calls.filter((c) => c.url.includes("/channels/bot-channel/messages"));
+  assert.match(fetches[0].url, /limit=100/);
+  assert.match(fetches[1].url, /before=901/, "keeps paging to find their messages");
+  const prompt = request.messages[0].content;
+  assert.match(prompt, /what sam has been saying \(15 of their messages\)/);
+  assert.doesNotMatch(prompt, /other \d/);
+  assert.ok(prompt.indexOf("sam message 140") < prompt.lastIndexOf("sam message 0"), "oldest message first");
+  assert.match(request.system, /what one person has been saying/);
+  const edit = lastEdit(calls).body;
+  assert.match(edit.content, /^📝 \*\*TL;DR of <@sam>\*\* \(15 messages\)\nSam keeps talking about trains\./);
+  assert.deepEqual(edit.allowed_mentions, { parse: [] }, "never pings the person");
+});
+
+test("/tldr with a user who hasn't posted says so", async () => {
+  const calls = mock([
+    ["anthropic", () => assert.fail("no AI call")],
+    ["/channels/bot-channel/messages", () => [{ id: "1", content: "hi", timestamp: "2026-11-13T14:00:00Z", author: { id: "jo" } }]],
+  ]);
+  await tldr(interaction("tldr", [{ name: "user", value: "ghost" }]), {});
+  assert.match(lastEdit(calls).body.content, /<@ghost> hasn't said anything here in the last 500 messages\./);
+});
