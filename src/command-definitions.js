@@ -14,6 +14,12 @@ const DEFINITIONS = [
         required: true,
         max_length: 1500,
       },
+      {
+        type: 7,
+        name: "channel",
+        description: "Use this channel's recent chat as context (defaults to this one)",
+        channel_types: [0, 5, 11],
+      },
     ],
   },
   {
@@ -26,6 +32,12 @@ const DEFINITIONS = [
         description: "How many recent messages to read (2–100, default 50)",
         min_value: 2,
         max_value: 100,
+      },
+      {
+        type: 7,
+        name: "channel",
+        description: "Which channel to summarize (defaults to this one)",
+        channel_types: [0, 5, 11],
       },
     ],
   },
@@ -130,6 +142,13 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "weather",
+    description: "Current weather and the next few days",
+    options: [
+      { type: 3, name: "place", description: 'A city, like "Boston" or "Huntington, NY" (defaults to New York)', max_length: 100 },
+    ],
+  },
+  {
     name: "roast",
     description: "Roast someone, based on their recent messages",
     options: [
@@ -143,6 +162,12 @@ const DEFINITIONS = [
           { name: "🔥🔥 spicy", value: "spicy" },
           { name: "🔥🔥🔥 savage", value: "savage" },
         ],
+      },
+      {
+        type: 7,
+        name: "channel",
+        description: "Where to look at their messages (defaults to this one)",
+        channel_types: [0, 5, 11],
       },
     ],
   },

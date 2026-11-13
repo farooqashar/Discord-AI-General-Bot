@@ -149,8 +149,7 @@ test("/vibe-check refuses a channel the user can't read", async () => {
   const i = interaction("vibe-check", [{ name: "channel", value: "secret" }], {
     resolved: { channels: { secret: { id: "secret", permissions: "0" } } },
   });
-  await vibeCheck(i, {});
-  assert.match(lastEdit(calls).body.content, /only vibe-check channels you can read/);
+  await assert.rejects(vibeCheck(i, {}), /only vibe-check channels you can read/);
   assert.ok(!calls.some((c) => c.url.includes("/channels/secret/messages")));
 });
 

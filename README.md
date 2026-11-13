@@ -4,8 +4,8 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 
 | Command | What it does |
 | --- | --- |
-| `/ask <question>` | Ask Claude anything; the answer posts in the channel. |
-| `/tldr [messages]` | Summarizes the last 50 messages (or 2–100) in the channel. |
+| `/ask <question> [channel]` | Ask anything. Reads the last 20 messages first, so follow-ups like "wdym?" work; point it at another channel to ask about that chat. |
+| `/tldr [messages] [channel]` | A couple of plain sentences on what a channel has been talking about (last 50 messages, or 2–100). |
 | `/event <details>` | "board game night Saturday 8pm at my place" becomes a real Discord scheduled event, with an **Add to Google Calendar** button. |
 | `/remind <reminder>` | "tomorrow at 6pm to book the restaurant" posts a reminder in the channel at that time. |
 | `/research <question>` | Searches the web and posts a short report with sources in a new thread. |
@@ -15,7 +15,8 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/food <craving> [area]` | Searches the web for 3–5 places to eat, with Google Maps links. Defaults to New York City. |
 | `/summarize <link>` | Reads a web page or PDF and posts a short TL;DR with a "worth reading?" verdict. |
 | `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (10–500) and reports its mood, topics, running jokes, most active people and peak hour. |
-| `/roast @user [heat]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
+| `/weather [place]` | Current conditions and the next three days from Open-Meteo (free, no key). Defaults to New York; handles "Huntington, NY". |
+| `/roast @user [heat] [channel]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
 
 ## How it works
 
@@ -61,6 +62,10 @@ Everything is done in the Cloudflare and Discord dashboards; no terminal needed.
 Back on the app's **General Information** page in Discord, paste the Worker URL into **Interactions Endpoint URL** and save. Discord pings the URL to check it, and the bot uses that ping to register its slash commands. They can take a minute to appear; if they don't show up, restart Discord.
 
 Then try `/ask` in your server.
+
+## Using one bot channel
+
+To keep the bot in a single channel, go to Server Settings → Integrations → the bot → Channels and allow only that channel. Commands that read chat (`/ask`, `/tldr`, `/vibe-check`, `/roast`) take a `channel` option to read a different channel and post the result where you ran them. The bot only reads a channel if the person asking can read it too.
 
 ## Changing things
 

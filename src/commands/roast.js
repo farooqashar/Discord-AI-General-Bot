@@ -1,5 +1,5 @@
 import { callClaude, textOf } from "../claude.js";
-import { discordApi, editOriginal, getOption, invokingUser, splitMessage } from "../discord.js";
+import { discordApi, editOriginal, getOption, invokingUser, splitMessage, targetChannel } from "../discord.js";
 
 // Hard limits that apply at every heat level.
 const LIMITS = `Base the roast on how they write and what they talk about in the messages provided,
@@ -21,6 +21,7 @@ no "but we love you". 4–6 sentences.`,
 
 export async function roast(interaction, env) {
   const targetId = getOption(interaction, "user");
+  const channelId = targetChannel(interaction, "roast from");
   const heat = HEAT[getOption(interaction, "heat")] ? getOption(interaction, "heat") : "spicy";
   const user = interaction.data.resolved?.users?.[targetId];
   const member = interaction.data.resolved?.members?.[targetId];
@@ -35,8 +36,8 @@ export async function roast(interaction, env) {
     return;
   }
 
-  // Their recent messages in this channel give Claude something to work with.
-  const recent = await discordApi(env, `/channels/${interaction.channel_id}/messages?limit=100`);
+  // Their recent messages in that channel give the roast something to work with.
+  const recent = await discordApi(env, `/channels/${channelId}/messages?limit=100`);
   const theirs = recent
     .filter((m) => m.author?.id === targetId && m.content?.trim())
     .slice(0, 30)

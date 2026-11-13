@@ -15,6 +15,7 @@ import { summarize } from "./commands/summarize.js";
 import { tldr } from "./commands/tldr.js";
 import { trivia } from "./commands/trivia.js";
 import { vibeCheck } from "./commands/vibe-check.js";
+import { weather } from "./commands/weather.js";
 import {
   EPHEMERAL,
   InteractionType,
@@ -38,6 +39,7 @@ export const HANDLERS = {
   food,
   summarize,
   "vibe-check": vibeCheck,
+  weather,
   roast,
 };
 

@@ -1,5 +1,5 @@
 import { callClaude, textOf } from "../claude.js";
-import { discordApi, getOption, replyWithText } from "../discord.js";
+import { authorName, channelLabel, discordApi, getOption, replyWithText, targetChannel } from "../discord.js";
 
 const SYSTEM = `You summarize Discord conversations for people catching up.
 Explain what the chat was about in 1–2 plain, casual sentences (under 50 words).
@@ -7,22 +7,23 @@ No bullet points, headings, lists or intro. Mention people by the names shown on
 Never use @everyone or @here.`;
 
 export async function tldr(interaction, env) {
+  const channelId = targetChannel(interaction, "summarize");
   const count = getOption(interaction, "messages") ?? 50;
 
   // Newest first from Discord; we flip it so the transcript reads in order.
-  const messages = await discordApi(env, `/channels/${interaction.channel_id}/messages?limit=${count}`);
+  const messages = await discordApi(env, `/channels/${channelId}/messages?limit=${count}`);
   const lines = messages
     .reverse()
     .filter((m) => m.content?.trim() || m.attachments?.length)
     .map((m) => {
-      const name = m.member?.nick ?? m.author.global_name ?? m.author.username;
+      const name = authorName(m);
       const time = m.timestamp.slice(11, 16);
       const files = m.attachments?.length ? ` [${m.attachments.length} attachment(s)]` : "";
       return `[${time} UTC] ${name}: ${m.content}${files}`;
     });
 
   if (lines.length === 0) {
-    await replyWithText(env, interaction, "There's nothing here to summarize yet.");
+    await replyWithText(env, interaction, `There's nothing${channelLabel(interaction, channelId) || " here"} to summarize yet.`);
     return;
   }
 
@@ -40,6 +41,6 @@ export async function tldr(interaction, env) {
   await replyWithText(
     env,
     interaction,
-    `📝 **TL;DR** (${lines.length} messages)\n${textOf(message)}`,
+    `📝 **TL;DR**${channelLabel(interaction, channelId)} (${lines.length} messages)\n${textOf(message)}`,
   );
 }

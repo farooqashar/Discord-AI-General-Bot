@@ -188,3 +188,33 @@ export function linkButtons(buttons) {
     },
   ];
 }
+
+const VIEW_CHANNEL = 1n << 10n;
+const READ_MESSAGE_HISTORY = 1n << 16n;
+
+/**
+ * Which channel a command should read: the `channel` option if given, else
+ * the one it was run in. Throws a friendly error if the person asking can't
+ * read that channel themselves, so the bot never leaks a channel they don't
+ * have access to.
+ */
+export function targetChannel(interaction, verb = "read") {
+  const channelId = getOption(interaction, "channel") ?? interaction.channel_id;
+  if (channelId !== interaction.channel_id) {
+    const perms = BigInt(interaction.data.resolved?.channels?.[channelId]?.permissions ?? 0);
+    if ((perms & VIEW_CHANNEL) === 0n || (perms & READ_MESSAGE_HISTORY) === 0n) {
+      throw new UserFacingError(`🔒 You can only ${verb} channels you can read yourself.`);
+    }
+  }
+  return channelId;
+}
+
+/** "in <#123>" for another channel, "" for the one the command was run in. */
+export function channelLabel(interaction, channelId) {
+  return channelId === interaction.channel_id ? "" : ` in <#${channelId}>`;
+}
+
+/** The name people see for a message's author. */
+export function authorName(message) {
+  return message.member?.nick ?? message.author?.global_name ?? message.author?.username ?? "someone";
+}

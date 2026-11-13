@@ -1,8 +1,5 @@
 import { extractStructured } from "../claude.js";
-import { NO_MENTIONS, discordApi, editOriginal, getOption } from "../discord.js";
-
-const VIEW_CHANNEL = 1n << 10n;
-const READ_MESSAGE_HISTORY = 1n << 16n;
+import { NO_MENTIONS, discordApi, editOriginal, getOption, targetChannel } from "../discord.js";
 
 const SCHEMA = {
   type: "object",
@@ -87,22 +84,9 @@ function hourLabel(h) {
 }
 
 export async function vibeCheck(interaction, env) {
-  const channelId = getOption(interaction, "channel") ?? interaction.channel_id;
+  const channelId = targetChannel(interaction, "vibe-check");
   const count = getOption(interaction, "messages") ?? 200;
   const timeZone = env.TIMEZONE || "America/New_York";
-
-  // For another channel, make sure the person asking can read it themselves,
-  // so the bot never leaks a channel they don't have access to.
-  if (channelId !== interaction.channel_id) {
-    const perms = BigInt(interaction.data.resolved?.channels?.[channelId]?.permissions ?? 0);
-    if ((perms & VIEW_CHANNEL) === 0n || (perms & READ_MESSAGE_HISTORY) === 0n) {
-      await editOriginal(env, interaction, {
-        content: "🔒 You can only vibe-check channels you can read yourself.",
-        allowed_mentions: NO_MENTIONS,
-      });
-      return;
-    }
-  }
 
   const history = await fetchHistory(env, channelId, count);
   const messages = history.filter((m) => !m.author?.bot && m.content?.trim()).reverse();
