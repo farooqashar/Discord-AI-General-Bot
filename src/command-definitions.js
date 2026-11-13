@@ -155,12 +155,12 @@ const DEFINITIONS = [
   },
   {
     name: "stats",
-    description: "Who talks most, when, and about what in a channel",
+    description: "Who talks most, when, and about what, server-wide or in one channel",
     options: [
       {
         type: 7,
         name: "channel",
-        description: "Which channel (defaults to this one)",
+        description: "Just this channel (leave blank for the whole server)",
         channel_types: [0, 5, 11],
       },
       { type: 4, name: "days", description: "How far back to look (1–30, default 7)", min_value: 1, max_value: 30 },

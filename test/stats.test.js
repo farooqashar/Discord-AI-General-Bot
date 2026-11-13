@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { computeStats, formatStats, stats } from "../src/commands/stats.js";
+import { basePermissions, channelPermissions, computeStats, formatStats, snowflakeTime, stats } from "../src/commands/stats.js";
 import { fetchHistory } from "../src/discord.js";
 
 const realFetch = globalThis.fetch;
@@ -88,9 +88,150 @@ test("/stats skips bots and reads only the requested days", async () => {
     return Response.json({ id: "1" });
   };
   await stats(
-    { application_id: "app", token: "t", channel_id: "c1", guild_id: "g", data: { options: [{ name: "days", value: 2 }] } },
+    {
+      application_id: "app",
+      token: "t",
+      channel_id: "c1",
+      guild_id: "g",
+      data: { options: [{ name: "channel", value: "c1" }, { name: "days", value: 2 }] },
+    },
     {},
   );
   assert.match(edits[0].content, /\*\*1\*\* messages from \*\*1\*\* person/);
   assert.match(edits[0].content, /last 2 days/);
+});
+
+const VIEW = 1n << 10n;
+const HISTORY = 1n << 16n;
+const READ = String(VIEW | HISTORY);
+const canRead = (p) => (p & VIEW) !== 0n && (p & HISTORY) !== 0n;
+
+test("works out which channels the asker can read, like Discord does", () => {
+  const member = { user: { id: "me" }, roles: ["mods"], permissions: READ };
+  const guild = "g";
+  const open = { id: "general", permission_overwrites: [] };
+  const hidden = { id: "staff", permission_overwrites: [{ id: guild, type: 0, allow: "0", deny: String(VIEW) }] };
+  const modsOnly = {
+    id: "mods-chat",
+    permission_overwrites: [
+      { id: guild, type: 0, allow: "0", deny: String(VIEW) },
+      { id: "mods", type: 0, allow: String(VIEW), deny: "0" },
+    ],
+  };
+  const blockedForMe = {
+    id: "secret",
+    permission_overwrites: [{ id: "me", type: 1, allow: "0", deny: String(VIEW) }],
+  };
+  assert.ok(canRead(channelPermissions(member, guild, open)));
+  assert.ok(!canRead(channelPermissions(member, guild, hidden)));
+  assert.ok(canRead(channelPermissions(member, guild, modsOnly)));
+  assert.ok(!canRead(channelPermissions(member, guild, blockedForMe)));
+  const admin = { user: { id: "a" }, roles: [], permissions: String(1n << 3n) };
+  assert.ok(canRead(channelPermissions(admin, guild, hidden)), "admins see everything");
+});
+
+test("snowflake IDs convert to the time they were made", () => {
+  // Discord's documented example ID.
+  assert.equal(new Date(snowflakeTime("175928847299117063")).toISOString(), "2016-04-30T11:18:25.796Z");
+});
+
+// A snowflake for "hoursAgo" hours ago, so channels look recently active.
+const snowAt = (ms) => String((BigInt(ms) - 1420070400000n) << 22n);
+
+test("server-wide /stats reads only channels the asker can read and skips quiet ones", async () => {
+  const now = Date.now();
+  const recent = snowAt(now - 3600000);
+  const old = snowAt(now - 40 * 86400000);
+  const iso = (h) => new Date(now - h * 3600000).toISOString();
+  const channels = [
+    { id: "general", type: 0, last_message_id: recent, permission_overwrites: [] },
+    { id: "food", type: 0, last_message_id: recent, permission_overwrites: [] },
+    { id: "staff", type: 0, last_message_id: recent, permission_overwrites: [{ id: "g", type: 0, allow: "0", deny: String(VIEW) }] },
+    { id: "dead", type: 0, last_message_id: old, permission_overwrites: [] },
+    { id: "voice", type: 2, last_message_id: recent, permission_overwrites: [] },
+  ];
+  const fetched = [];
+  const edits = [];
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if (url.endsWith("/guilds/g/channels")) return Response.json(channels);
+    if (url.endsWith("/guilds/g")) return Response.json({ id: "g", owner_id: "owner", roles: [{ id: "g", permissions: READ }] });
+    const match = url.match(/\/channels\/(\w+)\/messages/);
+    if (match) {
+      fetched.push(match[1]);
+      const id = match[1];
+      return Response.json([
+        { id: `${id}2`, content: `${id} chat`, timestamp: iso(1), author: { id: "sam", username: "sam" } },
+        { id: `${id}1`, content: "older", timestamp: iso(2), author: { id: "jo", username: "jo" } },
+      ]);
+    }
+    edits.push(JSON.parse(init.body));
+    return Response.json({ id: "1" });
+  };
+
+  await stats(
+    {
+      application_id: "app",
+      token: "t",
+      channel_id: "general",
+      guild_id: "g",
+      member: { user: { id: "me" }, roles: [], permissions: READ },
+      data: { options: [] },
+    },
+    {},
+  );
+
+  assert.deepEqual(fetched.sort(), ["food", "general"], "no hidden, quiet or voice channels");
+  const text = edits.at(-1).content;
+  assert.match(text, /^📊 \*\*Stats for the server\*\* · last 7 days/);
+  assert.match(text, /\*\*4\*\* messages from \*\*2\*\* people/);
+  assert.match(text, /\*\(2 channels you can read\)\*/);
+  assert.match(text, /\*\*Most active channels\*\*\n`▰▰▰▰▰▰▰▰` <#(general|food)> · 2/);
+});
+
+test("server-wide /stats stops at the request budget and says so", async () => {
+  const now = Date.now();
+  const recent = snowAt(now - 60000);
+  const channels = Array.from({ length: 60 }, (_, i) => ({ id: `c${i}`, type: 0, last_message_id: recent, permission_overwrites: [] }));
+  let pages = 0;
+  const edits = [];
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if (url.endsWith("/guilds/g/channels")) return Response.json(channels);
+    if (url.endsWith("/guilds/g")) return Response.json({ id: "g", owner_id: "owner", roles: [{ id: "g", permissions: READ }] });
+    if (url.includes("/messages?limit=100")) {
+      pages++;
+      return Response.json([{ id: "1", content: "hi", timestamp: new Date(now - 1000).toISOString(), author: { id: "a", username: "a" } }]);
+    }
+    edits.push(JSON.parse(init.body));
+    return Response.json({ id: "1" });
+  };
+  await stats(
+    { application_id: "app", token: "t", channel_id: "c0", guild_id: "g", member: { user: { id: "me" }, roles: [], permissions: READ }, data: { options: [] } },
+    {},
+  );
+  assert.equal(pages, 40);
+  assert.match(edits.at(-1).content, /stopped early on the busiest channels/);
+});
+
+test("server-wide permissions come from roles, not the channel the command ran in", () => {
+  const guild = {
+    id: "g",
+    owner_id: "owner",
+    roles: [
+      { id: "g", permissions: "0" }, // @everyone can't see anything by default
+      { id: "members", permissions: READ },
+      { id: "admins", permissions: String(1n << 3n) },
+    ],
+  };
+  assert.equal(basePermissions(guild, { user: { id: "x" }, roles: [] }), 0n);
+  assert.ok(canRead(basePermissions(guild, { user: { id: "x" }, roles: ["members"] })));
+  assert.ok(canRead(basePermissions(guild, { user: { id: "x" }, roles: ["admins"] })));
+  assert.ok(canRead(basePermissions(guild, { user: { id: "owner" }, roles: [] })));
+
+  // Someone with no role, who ran the command in a channel that lets them in,
+  // still can't read an ordinary channel with no overrides.
+  const noRole = { user: { id: "x" }, roles: [], permissions: READ };
+  const plain = { id: "general", permission_overwrites: [] };
+  assert.ok(!canRead(channelPermissions(noRole, "g", plain, basePermissions(guild, noRole))));
 });
