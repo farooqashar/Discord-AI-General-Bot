@@ -1,4 +1,4 @@
-import { callClaude, textOf } from "../claude.js";
+import { capabilities, formatSources, webSearch } from "../claude.js";
 import {
   authorName,
   channelLabel,
@@ -56,12 +56,15 @@ export async function ask(interaction, env) {
     ? `Recent messages in ${where}:\n${context}\n\nQuestion from ${askerName}: ${question}`
     : `Question from ${askerName}: ${question}`;
 
-  const message = await callClaude(env, {
-    max_tokens: 1024,
-    system: SYSTEM,
-    messages: [{ role: "user", content: prompt }],
+  // Searches only when the question needs it (at most 2), so most answers
+  // cost the same as before.
+  const { text, sources } = await webSearch(env, {
+    system: `${SYSTEM}\n\n${capabilities()}`,
+    prompt,
+    maxSearches: 2,
   });
-  const answer = textOf(message) || "I didn't get an answer back. Try rephrasing?";
+  const sourceList = formatSources(sources, 3);
+  const answer = (text || "I didn't get an answer back. Try rephrasing?") + (sourceList ? `\n\n${sourceList}` : "");
 
   const quoted = question.length > 300 ? `${question.slice(0, 300)}…` : question;
   await replyWithText(env, interaction, `> ${quoted}${channelLabel(interaction, channelId)}\n\n${answer}`);

@@ -171,3 +171,31 @@ test("/listen on and off need channel-management permission; status doesn't", as
   await listen(interaction("off", String(1n << 3n)), { DB: db });
   assert.ok(!db.table.has("c1"));
 });
+
+test("@mention replies can search the web and know the real command list", async () => {
+  const db = fakeDb([{ channel_id: "c1", last_seen_id: "100" }]);
+  let request;
+  const calls = mock([
+    ["anthropic", (_u, init) => {
+      request = JSON.parse(init.body);
+      return {
+        stop_reason: "end_turn",
+        content: [
+          { type: "server_tool_use", id: "s1", name: "web_search", input: { query: "knicks score" } },
+          { type: "web_search_tool_result", tool_use_id: "s1", content: [{ type: "web_search_result", url: "https://espn.com/x", title: "Knicks win" }] },
+          { type: "text", text: "Knicks won 112–104.", citations: [{ url: "https://espn.com/x", title: "Knicks win" }] },
+        ],
+      };
+    }],
+    ["after=100", () => [msg("101", `<@${BOT}> did the knicks win?`, { mentions: [{ id: BOT }] })]],
+    ["before=", () => []],
+  ]);
+  await pollMentions({ DB: db, DISCORD_APP_ID: BOT });
+
+  assert.equal(request.tools[0].type, "web_search_20250305");
+  assert.equal(request.tools[0].max_uses, 2);
+  assert.match(request.system, /\/research: Research a question/);
+  assert.match(request.system, /Don't offer anything else \(no polls/);
+  const sent = calls.find((c) => c.url.endsWith("/channels/c1/messages") && c.method === "POST");
+  assert.match(sent.body.content, /^Knicks won 112–104\.\n\n\*\*Sources\*\*\n1\. \[Knicks win\]\(<https:\/\/espn\.com\/x>\)$/);
+});

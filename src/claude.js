@@ -1,5 +1,6 @@
 // Small wrapper around the Anthropic Messages API.
 
+import { COMMANDS } from "./command-definitions.js";
 import { UserFacingError } from "./discord.js";
 
 const API_URL = "https://api.anthropic.com/v1/messages";
@@ -62,6 +63,18 @@ export async function callClaude(env, body) {
     throw new UserFacingError("I can't help with that one.");
   }
   return message;
+}
+
+/**
+ * What the bot can actually do, from the real command list. Used by the chat
+ * replies (/ask and @mentions) so they never offer features that don't exist.
+ */
+export function capabilities() {
+  const commands = COMMANDS.map((c) => `/${c.name}: ${c.description}`).join("\n");
+  return `Your slash commands:\n${commands}\nPeople can also @mention you in channels where /listen is on.
+Only suggest these when they'd help. Don't offer anything else (no polls, image generation, voice, DMs or moderation).
+You can search the web when a question needs current or specific facts; don't search for things you already know.
+Don't research, profile or look up private individuals; topics, companies, places and public figures are fine.`;
 }
 
 /** Join the text blocks of a Claude response. */

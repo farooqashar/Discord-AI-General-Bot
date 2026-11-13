@@ -5,7 +5,7 @@
 // turned on with /listen for new messages that @mention the bot (or reply to
 // one of its messages) and answers them. Replies take up to about a minute.
 
-import { callClaude, textOf } from "../claude.js";
+import { capabilities, formatSources, webSearch } from "../claude.js";
 import {
   NO_MENTIONS,
   UserFacingError,
@@ -109,17 +109,15 @@ async function answer(env, channelId, message, botId) {
   const name = message.member?.nick ?? message.author.global_name ?? message.author.username;
   const text = message.content.replaceAll(`<@${botId}>`, "").replaceAll(`<@!${botId}>`, "").trim() || "(just mentioned you)";
 
-  const reply = await callClaude(env, {
-    max_tokens: 1024,
-    system: SYSTEM,
-    messages: [
-      {
-        role: "user",
-        content: `${context ? `Recent chat:\n${context}\n\n` : ""}Latest message, from ${name}: ${text}`,
-      },
-    ],
+  const { text: replyText, sources } = await webSearch(env, {
+    system: `${SYSTEM}\n\n${capabilities()}`,
+    prompt: `${context ? `Recent chat:\n${context}\n\n` : ""}Latest message, from ${name}: ${text}`,
+    maxSearches: 2,
   });
-  const chunks = splitMessage(textOf(reply) || "🤔 I'm not sure what to say to that.");
+  const sourceList = formatSources(sources, 3);
+  const chunks = splitMessage(
+    (replyText || "🤔 I'm not sure what to say to that.") + (sourceList ? `\n\n${sourceList}` : ""),
+  );
 
   for (const [i, chunk] of chunks.entries()) {
     await sendChannelMessage(env, channelId, {
