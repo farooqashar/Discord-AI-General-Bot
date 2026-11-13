@@ -208,5 +208,6 @@ test("users never see the AI provider or raw error details", async () => {
   assert.match(systemPrompt, /^You are Ashistant/);
   assert.match(systemPrompt, /Don't mention which AI model or company/);
   const shown = lastEdit(calls).body.content;
-  assert.equal(shown, "⚠️ Sorry, something went wrong. Please try again in a bit.");
+  assert.equal(shown, "⚠️ Sorry, something went wrong. Please try again in a bit. (ref: ai-401)");
+  assert.doesNotMatch(shown, /x-api-key|anthropic|claude/i);
 });

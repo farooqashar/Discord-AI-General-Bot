@@ -51,7 +51,18 @@ export const HANDLERS = {
 function friendlyError(err) {
   if (err instanceof UserFacingError) return err.message;
   if (err.status === 403) return "I don't have permission to do that here. Ask a server admin to check my role's permissions.";
-  return "Sorry, something went wrong. Please try again in a bit.";
+  return `Sorry, something went wrong. Please try again in a bit. (ref: ${errorRef(err)})`;
+}
+
+/** A short, harmless hint about what failed, e.g. "discord-429", "ai-500", "limit". */
+export function errorRef(err) {
+  const msg = String(err?.message ?? "");
+  if (/too many subrequests/i.test(msg)) return "limit";
+  if (/rate limited/i.test(msg)) return "discord-429";
+  if (msg.startsWith("Discord ") && err.status) return `discord-${err.status}`;
+  if (msg.startsWith("AI request failed")) return `ai-${msg.match(/\((\d+)\)/)?.[1] ?? "x"}`;
+  if (msg.startsWith("Weather service")) return "weather";
+  return (err?.name || "error").toLowerCase().slice(0, 20);
 }
 
 const json = (data, status = 200) =>

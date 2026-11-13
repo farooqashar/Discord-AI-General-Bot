@@ -94,3 +94,12 @@ test("/food uses the place in the craving and doesn't force New York", async () 
   assert.doesNotMatch(edits[0].content, /near \*\*New York/);
   assert.match(edits[0].content, /Navat/);
 });
+
+test("error codes are short and never mention the provider", async () => {
+  const { errorRef } = await import("../src/index.js");
+  assert.equal(errorRef(new Error("Too many subrequests.")), "limit");
+  assert.equal(errorRef(new Error("Discord GET /x kept getting rate limited")), "discord-429");
+  assert.equal(errorRef(Object.assign(new Error("Discord GET /x failed (500): boom"), { status: 500 })), "discord-500");
+  assert.equal(errorRef(new Error('AI request failed (529): {"error":"overloaded"}')), "ai-529");
+  assert.equal(errorRef(new TypeError("x is undefined")), "typeerror");
+});

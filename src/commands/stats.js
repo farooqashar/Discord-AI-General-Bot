@@ -16,10 +16,13 @@ import {
 const MAX_MESSAGES = 1000;
 
 // Whole-server stats read many channels. Cloudflare's free plan allows 50
-// outside requests per run, so reading stops after this many pages, leaving
-// room for the channel list and the reply.
-const SERVER_PAGE_BUDGET = 40;
+// outside requests per run, and Discord's "slow down" retries count too, so
+// reading stops after this many pages, leaving plenty of room for retries,
+// the channel list and the reply. It also stops after a time limit, since
+// background work only gets about 30 seconds.
+const SERVER_PAGE_BUDGET = 30;
 const SERVER_MAX_MESSAGES = 3000;
+const SERVER_TIME_BUDGET_MS = 18000;
 
 const ADMINISTRATOR = 1n << 3n;
 const VIEW_CHANNEL = 1n << 10n;
@@ -205,18 +208,22 @@ async function fetchServer(env, interaction, since) {
     .sort((a, b) => (BigInt(b.last_message_id) > BigInt(a.last_message_id) ? 1 : -1));
 
   const messages = [];
+  const started = Date.now();
   let pages = 0;
   let read = 0;
   let unreadable = 0;
+  let failed = 0;
   let stoppedEarly = false;
+  const outOfBudget = () =>
+    pages >= SERVER_PAGE_BUDGET || messages.length >= SERVER_MAX_MESSAGES || Date.now() - started > SERVER_TIME_BUDGET_MS;
   for (const channel of candidates) {
-    if (pages >= SERVER_PAGE_BUDGET || messages.length >= SERVER_MAX_MESSAGES) {
+    if (outOfBudget()) {
       stoppedEarly = true;
       break;
     }
     let before;
     try {
-      while (pages < SERVER_PAGE_BUDGET && messages.length < SERVER_MAX_MESSAGES) {
+      while (!outOfBudget()) {
         pages++;
         const page = await discordApi(
           env,
@@ -229,13 +236,22 @@ async function fetchServer(env, interaction, since) {
       }
       read++;
     } catch (err) {
-      // The bot itself can't read this channel; skip it.
-      if (err.status === 403) unreadable++;
-      else throw err;
+      // One channel failing shouldn't sink the whole command: skip it and
+      // keep whatever was already counted.
+      if (err.status === 403) {
+        unreadable++;
+      } else if (/too many subrequests/i.test(err.message)) {
+        console.warn("Hit the request limit while reading channels; using what was read so far");
+        stoppedEarly = true;
+        break;
+      } else {
+        console.warn(`Skipped channel ${channel.id} for /stats:`, err.message);
+        failed++;
+      }
     }
   }
-  if (read < candidates.length - unreadable) stoppedEarly = true;
-  return { messages, read, unreadable, stoppedEarly };
+  if (read < candidates.length - unreadable - failed) stoppedEarly = true;
+  return { messages, read, unreadable, failed, stoppedEarly };
 }
 
 export async function stats(interaction, env) {
@@ -257,6 +273,7 @@ export async function stats(interaction, env) {
     messages = result.messages.filter((m) => !m.author?.bot);
     where = "the server";
     const parts = [`${result.read} channel${result.read === 1 ? "" : "s"} you can read`];
+    if (result.failed) parts.push(`${result.failed} couldn't be read right now`);
     if (result.stoppedEarly) parts.push("stopped early on the busiest channels; try fewer days for a full count");
     note = parts.join(" · ");
   } else {

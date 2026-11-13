@@ -210,7 +210,7 @@ test("server-wide /stats stops at the request budget and says so", async () => {
     { application_id: "app", token: "t", channel_id: "c0", guild_id: "g", member: { user: { id: "me" }, roles: [], permissions: READ }, data: { options: [] } },
     {},
   );
-  assert.equal(pages, 40);
+  assert.equal(pages, 30);
   assert.match(edits.at(-1).content, /stopped early on the busiest channels/);
 });
 
@@ -234,4 +234,45 @@ test("server-wide permissions come from roles, not the channel the command ran i
   const noRole = { user: { id: "x" }, roles: [], permissions: READ };
   const plain = { id: "general", permission_overwrites: [] };
   assert.ok(!canRead(channelPermissions(noRole, "g", plain, basePermissions(guild, noRole))));
+});
+
+test("server-wide /stats skips a channel that errors and stops cleanly at the request limit", async () => {
+  const now = Date.now();
+  // Most recently active first: a, broken, b, then c.
+  const channels = ["a", "broken", "b", "c"].map((id, i) => ({
+    id,
+    type: 0,
+    last_message_id: snowAt(now - 60000 * (i + 1)),
+    permission_overwrites: [],
+  }));
+  const edits = [];
+  let calls = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if (url.endsWith("/guilds/g/channels")) return Response.json(channels);
+    if (url.endsWith("/guilds/g")) return Response.json({ id: "g", roles: [{ id: "g", permissions: READ }] });
+    const id = url.match(/\/channels\/(\w+)\/messages/)?.[1];
+    if (id) {
+      calls++;
+      if (id === "broken") return new Response("{}", { status: 500 });
+      if (id === "c") throw new Error("Too many subrequests.");
+      return Response.json([{ id: `${id}1`, channel_id: id, content: "hi", timestamp: new Date(now - 1000).toISOString(), author: { id, username: id } }]);
+    }
+    edits.push(JSON.parse(init.body));
+    return Response.json({ id: "1" });
+  };
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await stats(
+      { application_id: "app", token: "t", channel_id: "a", guild_id: "g", member: { user: { id: "me" }, roles: [], permissions: READ }, data: { options: [] } },
+      {},
+    );
+  } finally {
+    console.warn = warn;
+  }
+  const text = edits.at(-1).content;
+  assert.match(text, /\*\*2\*\* messages from \*\*2\*\* people/, "kept what it could read");
+  assert.match(text, /1 couldn't be read right now/);
+  assert.match(text, /stopped early/);
 });
