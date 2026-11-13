@@ -16,6 +16,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/summarize <link>` | Reads a web page or PDF and posts a short TL;DR with a "worth reading?" verdict. |
 | `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (10–500) and reports its mood, topics, running jokes, most active people and peak hour. |
 | `/weather [place]` | Current conditions and the next three days from Open-Meteo (free, no key). Defaults to New York; handles "Huntington, NY". |
+| `/listen [on/off/status]` | Turns on @mention replies in a channel (admins only). The bot then answers anyone who @mentions it or replies to its messages there, within about a minute. |
 | `/roast @user [heat] [channel]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
 
 ## How it works
@@ -62,6 +63,10 @@ Everything is done in the Cloudflare and Discord dashboards; no terminal needed.
 Back on the app's **General Information** page in Discord, paste the Worker URL into **Interactions Endpoint URL** and save. Discord pings the URL to check it, and the bot uses that ping to register its slash commands. They can take a minute to appear; if they don't show up, restart Discord.
 
 Then try `/ask` in your server.
+
+## @mentions
+
+Discord only sends ordinary messages to bots that stay connected all the time, which this one doesn't. Instead, the every-minute cron checks the channels turned on with `/listen on` for new messages that @mention the bot or reply to it, and answers them as real replies, using the recent chat as context. Replies take up to about a minute. It never answers messages from before listening was turned on, and answers at most 5 mentions per channel per minute.
 
 ## Using one bot channel
 

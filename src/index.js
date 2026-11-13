@@ -1,13 +1,15 @@
 // Cloudflare Worker entry point.
 // - fetch: Discord sends every slash command here as an HTTP request.
-// - scheduled: runs every minute to post due reminders and to re-register
-//   slash commands if a deploy changed them.
+// - scheduled: runs every minute to post due reminders, answer @mentions in
+//   channels turned on with /listen, and re-register slash commands if a
+//   deploy changed them.
 
 import { ask } from "./commands/ask.js";
 import { decide } from "./commands/decide.js";
 import { eli5 } from "./commands/eli5.js";
 import { event } from "./commands/event.js";
 import { food } from "./commands/food.js";
+import { listen, pollMentions } from "./commands/listen.js";
 import { postDueReminders, remind } from "./commands/remind.js";
 import { research } from "./commands/research.js";
 import { roast } from "./commands/roast.js";
@@ -40,6 +42,7 @@ export const HANDLERS = {
   summarize,
   "vibe-check": vibeCheck,
   weather,
+  listen,
   roast,
 };
 
@@ -106,6 +109,7 @@ export default {
 
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil(postDueReminders(env));
+    ctx.waitUntil(pollMentions(env).catch((err) => console.error("Checking for mentions failed:", err)));
     ctx.waitUntil(
       syncCommandsIfChanged(env).catch((err) => console.error("Syncing slash commands failed:", err)),
     );

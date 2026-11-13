@@ -154,6 +154,22 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "listen",
+    description: "Answer @mentions in this channel (replies within about a minute)",
+    options: [
+      {
+        type: 3,
+        name: "action",
+        description: "Turn it on or off here, or see where it's on (default: status)",
+        choices: [
+          { name: "on", value: "on" },
+          { name: "off", value: "off" },
+          { name: "status", value: "status" },
+        ],
+      },
+    ],
+  },
+  {
     name: "roast",
     description: "Roast someone, based on their recent messages",
     options: [
