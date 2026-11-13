@@ -219,8 +219,11 @@ export function authorName(message) {
   return message.member?.nick ?? message.author?.global_name ?? message.author?.username ?? "someone";
 }
 
-/** Fetch up to `count` recent messages, newest first, paging 100 at a time. */
-export async function fetchHistory(env, channelId, count) {
+/**
+ * Fetch up to `count` recent messages, newest first, paging 100 at a time.
+ * With `since` (a Date), stops at messages older than that.
+ */
+export async function fetchHistory(env, channelId, count, { since } = {}) {
   const all = [];
   let before;
   while (all.length < count) {
@@ -229,7 +232,13 @@ export async function fetchHistory(env, channelId, count) {
       env,
       `/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ""}`,
     );
-    all.push(...page);
+    if (since) {
+      const recent = page.filter((m) => new Date(m.timestamp) >= since);
+      all.push(...recent);
+      if (recent.length < page.length) break;
+    } else {
+      all.push(...page);
+    }
     if (page.length < limit) break;
     before = page[page.length - 1].id;
   }

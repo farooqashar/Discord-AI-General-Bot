@@ -13,6 +13,7 @@ import { listen, pollMentions } from "./commands/listen.js";
 import { postDueReminders, remind } from "./commands/remind.js";
 import { research } from "./commands/research.js";
 import { roast } from "./commands/roast.js";
+import { stats } from "./commands/stats.js";
 import { summarize } from "./commands/summarize.js";
 import { tldr } from "./commands/tldr.js";
 import { trivia } from "./commands/trivia.js";
@@ -43,6 +44,7 @@ export const HANDLERS = {
   "vibe-check": vibeCheck,
   weather,
   listen,
+  stats,
   roast,
 };
 

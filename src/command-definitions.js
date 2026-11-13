@@ -154,6 +154,19 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "stats",
+    description: "Who talks most, when, and about what in a channel",
+    options: [
+      {
+        type: 7,
+        name: "channel",
+        description: "Which channel (defaults to this one)",
+        channel_types: [0, 5, 11],
+      },
+      { type: 4, name: "days", description: "How far back to look (1–30, default 7)", min_value: 1, max_value: 30 },
+    ],
+  },
+  {
     name: "listen",
     description: "Answer @mentions in this channel (replies within about a minute)",
     options: [
