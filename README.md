@@ -16,7 +16,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/summarize <link>` | Reads a web page or PDF and posts a short TL;DR with a "worth reading?" verdict. |
 | `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (10–500) and reports its mood, topics, running jokes, most active people and peak hour. |
 | `/weather [place]` | Current conditions and the next three days from Open-Meteo (free, no key). Defaults to New York; handles "Huntington, NY". |
-| `/stats [channel] [days]` | Server-wide by default: most active people and channels, busiest day and hour, top words and emoji, links and files, and the most-reacted message (last 7 days, up to 30). Only counts channels the person asking can read. Pick a channel for just that one. Plain counting, no AI, free. |
+| `/stats [channel] [days]` | Server-wide by default: most active people and channels, busiest day and hour, top words and emoji, links and files, and the most-reacted message (last 7 days, up to 30). Only counts channels everyone in the server can read, since the reply is public. Pick a channel for just that one. Plain counting, no AI, free. |
 | `/digest setup topics:… [channel] [time]` | A short daily digest posted to a channel: at most 5 one-line bullets, each linked to its source. Also `now` (preview), `off`, `list`. Setup needs Manage Channels. |
 | `/wrapped setup [channel] [about] [frequency] [day] [time]` | A scheduled weekly (or monthly) recap of the whole server or one channel: a one-line recap, messages and MVP, busiest channel, most-reacted and funniest message. Only covers channels everyone can see. Also `now`, `off`, `list`. |
 | `/listen [on/off/status]` | Turns on @mention replies in a channel (admins only). The bot then answers anyone who @mentions it or replies to its messages there, within about a minute. |
@@ -77,7 +77,7 @@ Digests and Wrapped recaps run on their own 5-minute cron trigger, separate from
 
 ## Using one bot channel
 
-To keep the bot in a single channel, go to Server Settings → Integrations → the bot → Channels and allow only that channel. Commands that read chat (`/ask`, `/tldr`, `/vibe-check`, `/roast`) take a `channel` option to read a different channel and post the result where you ran them. The bot only reads a channel if the person asking can read it too.
+To keep the bot in a single channel, go to Server Settings → Integrations → the bot → Channels and allow only that channel. Commands that read chat (`/ask`, `/tldr`, `/vibe-check`, `/roast`, `/stats`) take a `channel` option to read a different channel and post the result where you ran them. The bot only reads a channel if the person asking can read it too. The result is posted publicly only when everyone in the server can read that channel; for a private channel (or a thread in one), only the person who asked sees the reply. Server-wide `/stats` counts only channels everyone can read.
 
 ## Changing things
 

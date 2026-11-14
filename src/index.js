@@ -14,7 +14,7 @@ import { listen, pollMentions } from "./commands/listen.js";
 import { postDueReminders, remind } from "./commands/remind.js";
 import { research } from "./commands/research.js";
 import { roast } from "./commands/roast.js";
-import { stats } from "./commands/stats.js";
+import { channelIsPublic, stats } from "./commands/stats.js";
 import { summarize } from "./commands/summarize.js";
 import { tldr } from "./commands/tldr.js";
 import { trivia } from "./commands/trivia.js";
@@ -28,6 +28,7 @@ import {
   ResponseType,
   UserFacingError,
   editOriginal,
+  getOption,
   verifyDiscordRequest,
 } from "./discord.js";
 import { registerCommands, syncCommandsIfChanged } from "./register.js";
@@ -81,6 +82,39 @@ export async function runScheduledPosts(env) {
   }
 }
 
+// Commands whose `channel` option reads another channel and posts what it
+// finds where the command was run.
+const READS_OTHER_CHANNELS = new Set(["ask", "tldr", "vibe-check", "roast", "stats"]);
+const PRIVACY_CHECK_MS = 1500;
+
+/**
+ * Flags for the deferred reply. Reading another channel is only posted
+ * publicly when everyone in the server can read that channel; otherwise only
+ * the asker sees the reply, so a private channel never leaks into a public
+ * one. This has to be decided before the 3-second deadline, because a reply
+ * can't switch between public and ephemeral later. If the check fails or is
+ * slow, the reply is ephemeral.
+ */
+export async function replyFlags(interaction, env) {
+  if (!READS_OTHER_CHANNELS.has(interaction.data.name)) return undefined;
+  const channelId = getOption(interaction, "channel");
+  if (!channelId || channelId === interaction.channel_id) return undefined;
+  if (!interaction.guild_id) return EPHEMERAL;
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timed out")), PRIVACY_CHECK_MS);
+    });
+    const isPublic = await Promise.race([channelIsPublic(env, interaction.guild_id, channelId), timeout]);
+    return isPublic ? undefined : EPHEMERAL;
+  } catch (err) {
+    console.warn(`Couldn't check whether channel ${channelId} is public; replying privately:`, err.message);
+    return EPHEMERAL;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
@@ -129,8 +163,11 @@ export default {
       }
       // Discord needs an answer within 3 seconds, so reply "thinking…" now
       // and finish the real work in the background.
+      const flags = await replyFlags(interaction, env);
       ctx.waitUntil(runCommand(handler, interaction, env));
-      return json({ type: ResponseType.DEFERRED_CHANNEL_MESSAGE });
+      return json(
+        flags ? { type: ResponseType.DEFERRED_CHANNEL_MESSAGE, data: { flags } } : { type: ResponseType.DEFERRED_CHANNEL_MESSAGE },
+      );
     }
 
     return new Response("Unsupported interaction type", { status: 400 });
