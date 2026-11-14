@@ -25,9 +25,10 @@ database_name = "discord-bot-reminders"
 database_id = "085d3339-6e82-453a-9f58-ad6925842875"
 migrations_dir = "migrations"
 
-# Every minute: post due reminders, and sync slash commands if they changed.
+# Every minute: post due reminders, answer @mentions, and sync slash commands.
+# Every 5 minutes, separately: post scheduled digests and Wrapped recaps.
 [triggers]
-crons = ["* * * * *"]
+crons = ["* * * * *", "*/5 * * * *"]
 
 [observability]
 enabled = true

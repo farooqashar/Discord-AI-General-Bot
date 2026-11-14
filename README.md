@@ -17,6 +17,8 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/vibe-check [channel] [messages]` | Reads a channel's last 200 messages (10–500) and reports its mood, topics, running jokes, most active people and peak hour. |
 | `/weather [place]` | Current conditions and the next three days from Open-Meteo (free, no key). Defaults to New York; handles "Huntington, NY". |
 | `/stats [channel] [days]` | Server-wide by default: most active people and channels, busiest day and hour, top words and emoji, links and files, and the most-reacted message (last 7 days, up to 30). Only counts channels the person asking can read. Pick a channel for just that one. Plain counting, no AI, free. |
+| `/digest setup topics:… [channel] [time]` | A short daily digest posted to a channel: at most 5 one-line bullets, each linked to its source. Also `now` (preview), `off`, `list`. Setup needs Manage Channels. |
+| `/wrapped setup [channel] [about] [frequency] [day] [time]` | A scheduled weekly (or monthly) recap of the whole server or one channel: a one-line recap, messages and MVP, busiest channel, most-reacted and funniest message. Only covers channels everyone can see. Also `now`, `off`, `list`. |
 | `/listen [on/off/status]` | Turns on @mention replies in a channel (admins only). The bot then answers anyone who @mentions it or replies to its messages there, within about a minute. |
 | `/roast @user [heat] [channel]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
 
@@ -68,6 +70,10 @@ Then try `/ask` in your server.
 ## @mentions
 
 Discord only sends ordinary messages to bots that stay connected all the time, which this one doesn't. Instead, the every-minute cron checks the channels turned on with `/listen on` for new messages that @mention the bot or reply to it, and answers them as real replies, using the recent chat as context. Replies take up to about a minute. It never answers messages from before listening was turned on, and answers at most 5 mentions per channel per minute.
+
+## Scheduled posts
+
+Digests and Wrapped recaps run on their own 5-minute cron trigger, separate from the every-minute one, so their requests never compete with reminders and @mentions for Cloudflare's per-run limit. They post within 5 minutes of the set time (Eastern, from `TIMEZONE`), once per day or period. Each run posts at most one Wrapped (it reads many channels), otherwise up to 5 digests.
 
 ## Using one bot channel
 

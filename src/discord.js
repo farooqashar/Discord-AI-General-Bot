@@ -159,7 +159,21 @@ export async function replyWithText(env, interaction, text) {
 
 /** Read a slash command option's value by name. */
 export function getOption(interaction, name) {
-  return interaction.data.options?.find((o) => o.name === name)?.value;
+  const top = interaction.data.options ?? [];
+  // Subcommands (type 1) keep their own options one level down.
+  const sub = top.find((o) => o.type === 1)?.options ?? [];
+  return [...top, ...sub].find((o) => o.name === name && o.type !== 1)?.value;
+}
+
+/** The subcommand used, e.g. "setup" for /digest setup. */
+export function getSubcommand(interaction) {
+  return interaction.data.options?.find((o) => o.type === 1)?.name;
+}
+
+/** Can the person running the command manage channels (or the server)? */
+export function canManageChannels(interaction) {
+  const perms = BigInt(interaction.member?.permissions ?? 0);
+  return (perms & ((1n << 3n) | (1n << 4n) | (1n << 5n))) !== 0n; // admin, manage channels, manage server
 }
 
 /** The Discord user who ran the command (works in servers and DMs). */

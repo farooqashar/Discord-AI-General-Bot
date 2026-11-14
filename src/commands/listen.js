@@ -9,6 +9,7 @@ import { capabilities, formatSources, webSearch } from "../claude.js";
 import {
   NO_MENTIONS,
   UserFacingError,
+  canManageChannels,
   discordApi,
   editOriginal,
   getOption,
@@ -17,9 +18,6 @@ import {
 } from "../discord.js";
 import { formatContext } from "./ask.js";
 
-const ADMINISTRATOR = 1n << 3n;
-const MANAGE_CHANNELS = 1n << 4n;
-const MANAGE_GUILD = 1n << 5n;
 
 // Keeps a burst of mentions from running up the bill or spamming the channel.
 const MAX_REPLIES_PER_CHANNEL_PER_RUN = 5;
@@ -44,10 +42,6 @@ async function ensureTable(env) {
   ).run();
 }
 
-function canManage(interaction) {
-  const perms = BigInt(interaction.member?.permissions ?? 0);
-  return (perms & (ADMINISTRATOR | MANAGE_CHANNELS | MANAGE_GUILD)) !== 0n;
-}
 
 /** /listen on | off | status */
 export async function listen(interaction, env) {
@@ -55,7 +49,7 @@ export async function listen(interaction, env) {
   const channelId = interaction.channel_id;
   await ensureTable(env);
 
-  if (action !== "status" && !canManage(interaction)) {
+  if (action !== "status" && !canManageChannels(interaction)) {
     throw new UserFacingError("🔒 Only people who can manage channels can turn listening on or off.");
   }
 

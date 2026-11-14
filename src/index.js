@@ -6,6 +6,7 @@
 
 import { ask } from "./commands/ask.js";
 import { decide } from "./commands/decide.js";
+import { digest, postDueDigests } from "./commands/digest.js";
 import { eli5 } from "./commands/eli5.js";
 import { event } from "./commands/event.js";
 import { food } from "./commands/food.js";
@@ -19,6 +20,7 @@ import { tldr } from "./commands/tldr.js";
 import { trivia } from "./commands/trivia.js";
 import { vibeCheck } from "./commands/vibe-check.js";
 import { weather } from "./commands/weather.js";
+import { postDueWrapped, wrapped } from "./commands/wrapped.js";
 import {
   EPHEMERAL,
   InteractionType,
@@ -45,6 +47,8 @@ export const HANDLERS = {
   weather,
   listen,
   stats,
+  digest,
+  wrapped,
   roast,
 };
 
@@ -63,6 +67,18 @@ export function errorRef(err) {
   if (msg.startsWith("AI request failed")) return `ai-${msg.match(/\((\d+)\)/)?.[1] ?? "x"}`;
   if (msg.startsWith("Weather service")) return "weather";
   return (err?.name || "error").toLowerCase().slice(0, 20);
+}
+
+export const SCHEDULED_POSTS_CRON = "*/5 * * * *";
+
+/** One Wrapped per run if any is due (it reads many channels); otherwise digests. */
+export async function runScheduledPosts(env) {
+  try {
+    if (await postDueWrapped(env)) return;
+    await postDueDigests(env);
+  } catch (err) {
+    console.error("Scheduled posts failed:", err);
+  }
 }
 
 const json = (data, status = 200) =>
@@ -120,7 +136,13 @@ export default {
     return new Response("Unsupported interaction type", { status: 400 });
   },
 
-  async scheduled(_controller, env, ctx) {
+  async scheduled(controller, env, ctx) {
+    // Scheduled posts get their own 5-minute trigger, so their many requests
+    // never compete with reminders and @mentions for the per-run limit.
+    if (controller?.cron === SCHEDULED_POSTS_CRON) {
+      ctx.waitUntil(runScheduledPosts(env));
+      return;
+    }
     ctx.waitUntil(postDueReminders(env));
     ctx.waitUntil(pollMentions(env).catch((err) => console.error("Checking for mentions failed:", err)));
     ctx.waitUntil(

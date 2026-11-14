@@ -194,17 +194,29 @@ export function channelPermissions(member, guildId, channel, base = BigInt(membe
 
 const canRead = (perms) => (perms & VIEW_CHANNEL) !== 0n && (perms & READ_MESSAGE_HISTORY) !== 0n;
 
-/** Messages from every channel the asker can read, busiest-recently first, within the budget. */
-async function fetchServer(env, interaction, since) {
+// Someone with no roles: what any member of the server can see.
+const EVERYONE = { user: { id: null }, roles: [] };
+
+/** Can every member of the server read this channel? */
+export function isPublicChannel(guild, channel) {
+  return canRead(channelPermissions(EVERYONE, guild.id, channel, basePermissions(guild, EVERYONE)));
+}
+
+/**
+ * Messages from every channel `member` can read (or, with no member, every
+ * public channel), busiest-recently first, within the request budget.
+ */
+export async function fetchServerMessages(env, { guildId, member, since }) {
   const [guild, channels] = await Promise.all([
-    discordApi(env, `/guilds/${interaction.guild_id}`),
-    discordApi(env, `/guilds/${interaction.guild_id}/channels`),
+    discordApi(env, `/guilds/${guildId}`),
+    discordApi(env, `/guilds/${guildId}/channels`),
   ]);
-  const base = basePermissions(guild, interaction.member);
+  const who = member ?? EVERYONE;
+  const base = basePermissions(guild, who);
   const candidates = channels
     .filter((c) => c.type === 0 || c.type === 5) // text and announcement channels
     .filter((c) => c.last_message_id && snowflakeTime(c.last_message_id) >= since.getTime())
-    .filter((c) => canRead(channelPermissions(interaction.member, interaction.guild_id, c, base)))
+    .filter((c) => canRead(channelPermissions(who, guildId, c, base)))
     .sort((a, b) => (BigInt(b.last_message_id) > BigInt(a.last_message_id) ? 1 : -1));
 
   const messages = [];
@@ -269,7 +281,7 @@ export async function stats(interaction, env) {
   let note;
   let channelId = interaction.channel_id;
   if (server) {
-    const result = await fetchServer(env, interaction, since);
+    const result = await fetchServerMessages(env, { guildId: interaction.guild_id, member: interaction.member, since });
     messages = result.messages.filter((m) => !m.author?.bot);
     where = "the server";
     const parts = [`${result.read} channel${result.read === 1 ? "" : "s"} you can read`];

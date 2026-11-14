@@ -60,7 +60,7 @@ test("answers Discord's PING, registers the commands, and rejects unsigned reque
     assert.equal(calls[0].init.headers.Authorization, "Bot bot-token");
     const names = JSON.parse(calls[0].init.body).map((c) => c.name);
     assert.deepEqual(names.slice(0, 5), ["ask", "tldr", "event", "remind", "research"]);
-    assert.equal(names.length, 15);
+    assert.equal(names.length, 17);
 
     const unsigned = new Request("https://bot.example/", { method: "POST", body: "{}" });
     assert.equal((await worker.fetch(unsigned, env, ctx)).status, 401);

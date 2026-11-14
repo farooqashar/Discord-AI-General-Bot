@@ -167,6 +167,93 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "digest",
+    description: "A short daily digest posted to a channel",
+    options: [
+      {
+        type: 1,
+        name: "setup",
+        description: "Post a daily digest in a channel (needs Manage Channels)",
+        options: [
+          { type: 3, name: "topics", description: 'What to cover, e.g. "NYC events, AI news, weather"', required: true, max_length: 200 },
+          { type: 7, name: "channel", description: "Where to post it (defaults to this one)", channel_types: [0, 5] },
+          { type: 3, name: "time", description: 'When, e.g. "8am" (Eastern; default 8am)', max_length: 10 },
+        ],
+      },
+      {
+        type: 1,
+        name: "now",
+        description: "Preview a digest here right now",
+        options: [{ type: 3, name: "topics", description: "Topics (defaults to this channel's digest)", max_length: 200 }],
+      },
+      {
+        type: 1,
+        name: "off",
+        description: "Stop a channel's daily digest (needs Manage Channels)",
+        options: [{ type: 7, name: "channel", description: "Which channel (defaults to this one)", channel_types: [0, 5] }],
+      },
+      { type: 1, name: "list", description: "Show the daily digests in this server" },
+    ],
+  },
+  {
+    name: "wrapped",
+    description: "A scheduled weekly or monthly recap of the server or a channel",
+    options: [
+      {
+        type: 1,
+        name: "setup",
+        description: "Schedule a recap (needs Manage Channels)",
+        options: [
+          { type: 7, name: "channel", description: "Where to post it (defaults to this one)", channel_types: [0, 5] },
+          { type: 7, name: "about", description: "Recap just this channel (leave blank for the whole server)", channel_types: [0, 5] },
+          {
+            type: 3,
+            name: "frequency",
+            description: "Weekly or monthly (default weekly)",
+            choices: [
+              { name: "weekly", value: "weekly" },
+              { name: "monthly (1st of the month)", value: "monthly" },
+            ],
+          },
+          {
+            type: 3,
+            name: "day",
+            description: "Day for weekly recaps (default Sunday)",
+            choices: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].map((d) => ({
+              name: d[0].toUpperCase() + d.slice(1),
+              value: d,
+            })),
+          },
+          { type: 3, name: "time", description: 'When, e.g. "6pm" (Eastern; default 6pm)', max_length: 10 },
+        ],
+      },
+      {
+        type: 1,
+        name: "now",
+        description: "Preview a recap here right now",
+        options: [
+          { type: 7, name: "about", description: "Recap just this channel (leave blank for the whole server)", channel_types: [0, 5] },
+          {
+            type: 3,
+            name: "frequency",
+            description: "Last week or last month (default week)",
+            choices: [
+              { name: "last week", value: "weekly" },
+              { name: "last month", value: "monthly" },
+            ],
+          },
+        ],
+      },
+      {
+        type: 1,
+        name: "off",
+        description: "Stop a channel's scheduled recap (needs Manage Channels)",
+        options: [{ type: 7, name: "channel", description: "Which channel (defaults to this one)", channel_types: [0, 5] }],
+      },
+      { type: 1, name: "list", description: "Show the scheduled recaps in this server" },
+    ],
+  },
+  {
     name: "listen",
     description: "Answer @mentions in this channel (replies within about a minute)",
     options: [
