@@ -16,6 +16,12 @@ export function parseTime(text) {
   return { hour, minute };
 }
 
+/** Scheduled posts are checked every 5 minutes, so round down to a time a run will reach. */
+export function parseScheduleTime(text) {
+  const { hour, minute } = parseTime(text);
+  return { hour, minute: minute - (minute % 5) };
+}
+
 export function formatTime({ hour, minute }) {
   const h = hour % 12 === 0 ? 12 : hour % 12;
   return `${h}${minute ? `:${String(minute).padStart(2, "0")}` : ""}${hour < 12 ? "am" : "pm"}`;

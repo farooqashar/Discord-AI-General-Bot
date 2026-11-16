@@ -10,7 +10,7 @@ import {
   getSubcommand,
   sendChannelMessage,
 } from "../discord.js";
-import { formatTime, initialLastSent, isDue, localNow, parseTime } from "../schedule.js";
+import { formatTime, initialLastSent, isDue, localNow, parseScheduleTime } from "../schedule.js";
 
 const MAX_BULLETS = 5;
 const DEFAULT_TIME = "8am";
@@ -75,7 +75,7 @@ export async function digest(interaction, env) {
   if (action === "setup") {
     const channelId = getOption(interaction, "channel") ?? interaction.channel_id;
     const topics = getOption(interaction, "topics").trim();
-    const time = parseTime(getOption(interaction, "time") ?? DEFAULT_TIME);
+    const time = parseScheduleTime(getOption(interaction, "time") ?? DEFAULT_TIME);
     const lastSent = initialLastSent({ frequency: "daily", ...time }, localNow(timeZone));
     await env.DB.prepare(
       `INSERT INTO digests (channel_id, guild_id, topics, hour, minute, last_sent, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)
