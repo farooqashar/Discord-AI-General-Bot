@@ -73,7 +73,7 @@ Discord only sends ordinary messages to bots that stay connected all the time, w
 
 ## Scheduled posts
 
-Digests and Wrapped recaps run on their own 5-minute cron trigger, separate from the every-minute one, so their requests never compete with reminders and @mentions for Cloudflare's per-run limit. Set times are rounded down to the nearest 5 minutes (11:58pm becomes 11:55pm), and posts go out at that time (Eastern, from `TIMEZONE`), once per day or period. Each run posts at most one Wrapped (it reads many channels), otherwise up to 5 digests.
+Digests and Wrapped recaps run on their own 5-minute cron trigger, separate from the every-minute one, so their requests never compete with reminders and @mentions for Cloudflare's per-run limit. Set times are rounded down to the nearest 5 minutes (11:58pm becomes 11:55pm), and posts become due at that time (Eastern, from `TIMEZONE`), once per day or period. Each run posts at most one Wrapped (it reads many channels), otherwise up to 5 digests, so when several are due at once the rest go out on the following runs, 5 or more minutes late.
 
 ## Using one bot channel
 
