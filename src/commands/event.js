@@ -2,6 +2,7 @@ import { describeNow, extractStructured } from "../claude.js";
 import {
   NO_MENTIONS,
   UserFacingError,
+  canCreateEvents,
   discordApi,
   discordTimestamp,
   editOriginal,
@@ -9,6 +10,7 @@ import {
   linkButtons,
   replyWithText,
 } from "../discord.js";
+import { basePermissions } from "./stats.js";
 
 // Google Calendar's "add event" page, prefilled. Times are UTC: 20261114T010000Z.
 const gcalTime = (date) => date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
@@ -66,6 +68,12 @@ export async function event(interaction, env) {
   if (!interaction.guild_id) {
     await replyWithText(env, interaction, "Events can only be created inside a server.");
     return;
+  }
+  // Check server-wide permissions: a Create Events override on just this
+  // channel shouldn't let someone add events to the whole server.
+  const guild = await discordApi(env, `/guilds/${interaction.guild_id}`);
+  if (!canCreateEvents(basePermissions(guild, interaction.member))) {
+    throw new UserFacingError("🔒 Only people who can create events in this server can use /event.");
   }
 
   const timeZone = env.TIMEZONE || "America/New_York";

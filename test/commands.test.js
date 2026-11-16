@@ -102,10 +102,17 @@ test("/event creates the Discord event and shows the Google Calendar button", as
         },
       ],
     }),
-    discord: (url) => (url.includes("scheduled-events") ? { id: "ev1", name: "Board game night" } : { id: "m" }),
+    discord: (url) =>
+      url.includes("scheduled-events")
+        ? { id: "ev1", name: "Board game night" }
+        : url.endsWith("/guilds/guild")
+          ? { id: "guild", roles: [{ id: "guild", permissions: "0" }, { id: "planners", permissions: String(1n << 44n) }] }
+          : { id: "m" },
   });
 
-  await event(interaction("event", [{ name: "details", value: "board games saturday 8pm" }]), {});
+  const withCreateEvents = interaction("event", [{ name: "details", value: "board games saturday 8pm" }]);
+  withCreateEvents.member.roles = ["planners"];
+  await event(withCreateEvents, {});
 
   const created = calls.find((c) => c.url.includes("/guilds/guild/scheduled-events"));
   assert.equal(created.body.entity_metadata.location, "Ashar's place");
@@ -114,6 +121,51 @@ test("/event creates the Discord event and shows the Google Calendar button", as
   assert.equal(buttons[0].label, "Add to Google Calendar");
   assert.match(buttons[0].url, /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/);
   assert.equal(buttons[1].url, "https://discord.com/events/guild/ev1");
+});
+
+test("/event refuses members who can't create events, without creating one", async () => {
+  const guild = {
+    id: "guild",
+    owner_id: "owner",
+    roles: [
+      { id: "guild", permissions: String(1n << 11n) }, // @everyone: send messages only
+      { id: "managers", permissions: String(1n << 33n) }, // manage events, but not create
+    ],
+  };
+  const calls = mockFetch({
+    claude: () => assert.fail("shouldn't call Claude"),
+    discord: (url) => (url.endsWith("/guilds/guild") ? guild : assert.fail(`unexpected call to ${url}`)),
+  });
+  const refuse = async (member) => {
+    const i = interaction("event", [{ name: "details", value: "party saturday 8pm" }]);
+    i.member = { user: { id: "me" }, roles: [], ...member };
+    await assert.rejects(event(i, {}), /Only people who can create events/);
+  };
+  await refuse({ permissions: String(1n << 11n) });
+  // Create Events granted only by this channel's overrides isn't enough for a server-wide event.
+  await refuse({ permissions: String((1n << 11n) | (1n << 44n)) });
+  await refuse({ roles: ["managers"], permissions: String(1n << 33n) });
+  assert.ok(!calls.some((c) => c.url.includes("scheduled-events")));
+
+  // Discord only shows the command to members with every listed bit, so it lists just Create Events.
+  const command = COMMANDS.find((c) => c.name === "event");
+  assert.equal(command.default_member_permissions, String(1n << 44n));
+});
+
+test("/event lets the server owner and administrators through", async () => {
+  const { canCreateEvents } = await import("../src/discord.js");
+  const { basePermissions } = await import("../src/commands/stats.js");
+  const guild = {
+    id: "guild",
+    owner_id: "owner",
+    roles: [
+      { id: "guild", permissions: "0" },
+      { id: "admins", permissions: String(1n << 3n) },
+    ],
+  };
+  assert.ok(canCreateEvents(basePermissions(guild, { user: { id: "owner" }, roles: [] })));
+  assert.ok(canCreateEvents(basePermissions(guild, { user: { id: "a" }, roles: ["admins"] })));
+  assert.ok(!canCreateEvents(basePermissions(guild, { user: { id: "x" }, roles: [] })));
 });
 
 test("/trivia hides the answer in a spoiler and includes all four choices", async () => {
