@@ -78,11 +78,16 @@ If only a day is given with no time, use 9:00 AM.`,
 // minute until it is this late, then dropped.
 const GIVE_UP_AFTER = 60 * 60;
 
-/** Runs every minute (cron trigger): posts any reminders that are due. */
+/**
+ * Runs every minute (cron trigger): posts any reminders that are due.
+ * Due reminders are taken oldest row first, and a retried one goes back in
+ * as a new row, so reminders that keep failing move to the back of the
+ * queue instead of filling every run's batch of 25.
+ */
 export async function postDueReminders(env) {
   const now = Math.floor(Date.now() / 1000);
   const { results } = await env.DB.prepare(
-    "SELECT id, channel_id, user_id, message, due_at, created_at FROM reminders WHERE due_at <= ? ORDER BY due_at LIMIT 25",
+    "SELECT id, channel_id, user_id, message, due_at, created_at FROM reminders WHERE due_at <= ? ORDER BY id LIMIT 25",
   )
     .bind(now)
     .all();
@@ -108,9 +113,9 @@ export async function postDueReminders(env) {
       }
       console.warn(`Reminder ${reminder.id} could not be posted, will retry:`, err.message);
       await env.DB.prepare(
-        "INSERT INTO reminders (id, channel_id, user_id, message, due_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO reminders (channel_id, user_id, message, due_at, created_at) VALUES (?, ?, ?, ?, ?)",
       )
-        .bind(reminder.id, reminder.channel_id, reminder.user_id, reminder.message, reminder.due_at, reminder.created_at)
+        .bind(reminder.channel_id, reminder.user_id, reminder.message, reminder.due_at, reminder.created_at)
         .run();
     }
   }

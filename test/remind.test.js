@@ -7,22 +7,26 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-/** A tiny in-memory stand-in for the D1 reminders table. */
+/** A tiny in-memory stand-in for the D1 reminders table (ids count up, LIMIT is applied). */
 function fakeDb(rows = []) {
   const table = new Map(rows.map((r) => [r.id, { created_at: 0, ...r }]));
+  let nextId = Math.max(0, ...table.keys()) + 1;
   const stmt = (sql, args) => ({
     run: async () => {
       if (sql.startsWith("INSERT")) {
-        const [id, channel_id, user_id, message, due_at, created_at] = args;
+        const [channel_id, user_id, message, due_at, created_at] = args;
+        const id = nextId++;
         table.set(id, { id, channel_id, user_id, message, due_at, created_at });
       } else if (sql.startsWith("DELETE")) {
         return { meta: { changes: table.delete(args[0]) ? 1 : 0 } };
       }
       return { meta: { changes: 1 } };
     },
-    all: async () => ({
-      results: [...table.values()].filter((r) => r.due_at <= args[0]).sort((a, b) => a.due_at - b.due_at),
-    }),
+    all: async () => {
+      assert.match(sql, /ORDER BY id LIMIT 25$/);
+      const due = [...table.values()].filter((r) => r.due_at <= args[0]).sort((a, b) => a.id - b.id);
+      return { results: due.slice(0, 25) };
+    },
   });
   return { table, prepare: (sql) => ({ bind: (...args) => stmt(sql, args) }) };
 }
@@ -54,7 +58,9 @@ test("a reminder that hits a Discord 5xx is kept and posted on a later run", asy
   mock(() => new Response("oops", { status: 502 }));
   await postDueReminders({ DB: db });
   assert.equal(db.table.size, 1);
-  assert.equal(db.table.get(1).message, "book it");
+  const [kept] = db.table.values();
+  assert.equal(kept.message, "book it");
+  assert.equal(kept.due_at, reminder().due_at);
 
   const posted = mock(() => Response.json({ id: "m" }));
   await postDueReminders({ DB: db });
@@ -96,4 +102,21 @@ test("a reminder another run already claimed is not posted twice", async () => {
   };
   await postDueReminders({ DB: db });
   assert.deepEqual(posted, []);
+});
+
+test("reminders that keep failing don't hold up other due reminders", async () => {
+  // 25 old reminders for a channel that keeps returning 5xx fill a whole batch,
+  // followed by one for a healthy channel.
+  const broken = Array.from({ length: 25 }, (_, i) => reminder({ id: i + 1, channel_id: "broken", due_at: nowSec() - 600 }));
+  const db = fakeDb([...broken, reminder({ id: 26, channel_id: "ok" })]);
+  const posted = mock((channel) => (channel === "ok" ? Response.json({ id: "m" }) : new Response("oops", { status: 502 })));
+
+  await postDueReminders({ DB: db });
+  assert.ok(!posted.includes("ok"));
+  assert.equal(db.table.size, 26); // all 25 kept for a retry
+
+  await postDueReminders({ DB: db });
+  assert.ok(posted.includes("ok"), "the healthy reminder goes out on the next run");
+  assert.equal(db.table.size, 25);
+  assert.ok([...db.table.values()].every((r) => r.channel_id === "broken"));
 });
