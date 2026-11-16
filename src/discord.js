@@ -176,10 +176,14 @@ export function canManageChannels(interaction) {
   return (perms & ((1n << 3n) | (1n << 4n) | (1n << 5n))) !== 0n; // admin, manage channels, manage server
 }
 
-/** Can the person running the command create server events? */
-export function canCreateEvents(interaction) {
-  const perms = BigInt(interaction.member?.permissions ?? 0);
-  return (perms & ((1n << 3n) | (1n << 33n) | (1n << 44n))) !== 0n; // admin, manage events, create events
+/**
+ * Can someone with these server-wide permissions create server events?
+ * Pass their server-wide permissions (see basePermissions in stats.js), not
+ * interaction.member.permissions: those include the overrides of the channel
+ * the command ran in, and an event belongs to the whole server.
+ */
+export function canCreateEvents(perms) {
+  return (BigInt(perms ?? 0) & ((1n << 3n) | (1n << 44n))) !== 0n; // admin, create events
 }
 
 /** The Discord user who ran the command (works in servers and DMs). */
