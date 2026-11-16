@@ -74,25 +74,49 @@ If only a day is given with no time, use 9:00 AM.`,
   );
 }
 
-/** Runs every minute (cron trigger): posts any reminders that are due. */
+// A reminder that keeps failing for a transient reason is retried every
+// minute until it is this late, then dropped.
+const GIVE_UP_AFTER = 60 * 60;
+
+/**
+ * Runs every minute (cron trigger): posts any reminders that are due.
+ * Due reminders are taken oldest row first, and a retried one goes back in
+ * as a new row, so reminders that keep failing move to the back of the
+ * queue instead of filling every run's batch of 25.
+ */
 export async function postDueReminders(env) {
   const now = Math.floor(Date.now() / 1000);
   const { results } = await env.DB.prepare(
-    "SELECT id, channel_id, user_id, message FROM reminders WHERE due_at <= ? ORDER BY due_at LIMIT 25",
+    "SELECT id, channel_id, user_id, message, due_at, created_at FROM reminders WHERE due_at <= ? ORDER BY id LIMIT 25",
   )
     .bind(now)
     .all();
 
   for (const reminder of results) {
+    // Claim it first so an overlapping run can't post it twice.
+    const claimed = await env.DB.prepare("DELETE FROM reminders WHERE id = ?").bind(reminder.id).run();
+    if (claimed.meta?.changes === 0) continue;
+
     try {
       await sendChannelMessage(env, reminder.channel_id, {
         content: `⏰ **Reminder** from <@${reminder.user_id}>: ${reminder.message}`,
         allowed_mentions: { users: [reminder.user_id] },
       });
     } catch (err) {
-      // Usually a deleted channel or missing permission; retrying won't help.
-      console.error(`Reminder ${reminder.id} could not be posted:`, err.message);
+      // A 4xx (deleted channel, missing permission) won't change on retry.
+      // Anything else (5xx, network, rate limits) gets another go next minute.
+      const permanent = err.status >= 400 && err.status < 500;
+      const tooLate = now - reminder.due_at > GIVE_UP_AFTER;
+      if (permanent || tooLate) {
+        console.error(`Reminder ${reminder.id} could not be posted, dropping it:`, err.message);
+        continue;
+      }
+      console.warn(`Reminder ${reminder.id} could not be posted, will retry:`, err.message);
+      await env.DB.prepare(
+        "INSERT INTO reminders (channel_id, user_id, message, due_at, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+        .bind(reminder.channel_id, reminder.user_id, reminder.message, reminder.due_at, reminder.created_at)
+        .run();
     }
-    await env.DB.prepare("DELETE FROM reminders WHERE id = ?").bind(reminder.id).run();
   }
 }
