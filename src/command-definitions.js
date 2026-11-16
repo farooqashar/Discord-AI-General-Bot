@@ -255,6 +255,39 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "auto-pin",
+    description: "Each day, pin messages in a channel that match a description",
+    options: [
+      {
+        type: 1,
+        name: "setup",
+        description: "Pin matching messages daily (needs Manage Channels)",
+        options: [
+          { type: 7, name: "channel", description: "Which channel to pin in", required: true, channel_types: [0, 5] },
+          { type: 3, name: "rule", description: 'What to pin, e.g. "restaurant recs and confirmed plans"', required: true, max_length: 200 },
+          { type: 3, name: "time", description: 'When to check each day (Eastern; default 11pm)', max_length: 10 },
+          { type: 7, name: "report", description: "Optional: post links to what got pinned here", channel_types: [0, 5] },
+        ],
+      },
+      {
+        type: 1,
+        name: "now",
+        description: "Preview what would be pinned from the last 24 hours (pins nothing)",
+        options: [
+          { type: 7, name: "channel", description: "Which channel (defaults to this one)", channel_types: [0, 5] },
+          { type: 3, name: "rule", description: "What to look for (defaults to the saved rule)", max_length: 200 },
+        ],
+      },
+      {
+        type: 1,
+        name: "off",
+        description: "Stop auto-pin in a channel (needs Manage Channels)",
+        options: [{ type: 7, name: "channel", description: "Which channel (defaults to this one)", channel_types: [0, 5] }],
+      },
+      { type: 1, name: "list", description: "Show where auto-pin is set up" },
+    ],
+  },
+  {
     name: "listen",
     description: "Answer @mentions in this channel (replies within about a minute)",
     options: [

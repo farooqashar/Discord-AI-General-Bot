@@ -5,6 +5,7 @@
 //   deploy changed them.
 
 import { ask } from "./commands/ask.js";
+import { autoPin, runDueAutoPins } from "./commands/auto-pin.js";
 import { decide } from "./commands/decide.js";
 import { digest, postDueDigests } from "./commands/digest.js";
 import { eli5 } from "./commands/eli5.js";
@@ -50,6 +51,7 @@ export const HANDLERS = {
   stats,
   digest,
   wrapped,
+  "auto-pin": autoPin,
   roast,
 };
 
@@ -72,11 +74,12 @@ export function errorRef(err) {
 
 export const SCHEDULED_POSTS_CRON = "*/5 * * * *";
 
-/** One Wrapped per run if any is due (it reads many channels); otherwise digests. */
+/** One Wrapped per run if any is due (it reads many channels); otherwise digests, then auto-pins. */
 export async function runScheduledPosts(env) {
   try {
     if (await postDueWrapped(env)) return;
     await postDueDigests(env);
+    await runDueAutoPins(env);
   } catch (err) {
     console.error("Scheduled posts failed:", err);
   }
@@ -84,7 +87,7 @@ export async function runScheduledPosts(env) {
 
 // Commands whose `channel` option reads another channel and posts what it
 // finds where the command was run.
-const READS_OTHER_CHANNELS = new Set(["ask", "tldr", "vibe-check", "roast", "stats"]);
+const READS_OTHER_CHANNELS = new Set(["ask", "tldr", "vibe-check", "roast", "stats", "auto-pin"]);
 const PRIVACY_CHECK_MS = 1500;
 
 /**

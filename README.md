@@ -19,6 +19,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/stats [channel] [days]` | Server-wide by default: most active people and channels, busiest day and hour, top words and emoji, links and files, and the most-reacted message (last 7 days, up to 30). Only counts channels everyone in the server can read, since the reply is public. Pick a channel for just that one. Plain counting, no AI, free. |
 | `/digest setup topics:… [channel] [time]` | A short daily digest posted to a channel: at most 5 one-line bullets, each linked to its source. Also `now` (preview), `off`, `list`. Setup needs Manage Channels. |
 | `/wrapped setup [channel] [about] [frequency] [day] [time]` | A scheduled weekly (or monthly) recap of the whole server or one channel: a one-line recap, messages and MVP, busiest channel, most-reacted and funniest message. Only covers channels everyone can see. Also `now`, `off`, `list`. |
+| `/auto-pin setup channel rule [time] [report]` | Once a day (default 11pm), pins up to 5 messages from the last 24 hours in a channel that match a description, like "restaurant recs and confirmed plans". Never re-pins. The optional report channel gets jump links only, no message text. Also `now` (preview, pins nothing), `off`, `list`. Needs the Pin Messages permission. |
 | `/listen [on/off/status]` | Turns on @mention replies in a channel (admins only). The bot then answers anyone who @mentions it or replies to its messages there, within about a minute. |
 | `/roast @user [heat] [channel]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
 
@@ -50,10 +51,10 @@ Everything is done in the Cloudflare and Discord dashboards; no terminal needed.
 4. Invite the bot to your server by opening this URL with your Application ID filled in:
 
    ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=17910013692928
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot+applications.commands&permissions=2269709827378176
    ```
 
-   That grants View Channels, Send Messages, Read Message History, Create Public Threads, Send Messages in Threads, and Create/Manage Events.
+   That grants View Channels, Send Messages, Read Message History, Create Public Threads, Send Messages in Threads, Create/Manage Events, and Pin Messages (for `/auto-pin`). Re-opening the link on a server the bot is already in just updates its permissions.
 
 ### 2. Deploy on Cloudflare
 
