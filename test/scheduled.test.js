@@ -3,7 +3,7 @@ import { afterEach, test } from "node:test";
 import { buildDigest, digest, postDueDigests, tidyDigest } from "../src/commands/digest.js";
 import { buildWrapped, postDueWrapped, wrapped } from "../src/commands/wrapped.js";
 import worker, { SCHEDULED_POSTS_CRON } from "../src/index.js";
-import { initialLastSent, isDue, localNow, parseTime } from "../src/schedule.js";
+import { initialLastSent, isDue, localNow, parseScheduleTime, parseTime } from "../src/schedule.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -80,6 +80,14 @@ test("parses friendly times", () => {
   assert.throws(() => parseTime("13pm"), /isn't a valid time/);
 });
 
+test("scheduled times round down to the 5-minute run that posts them", () => {
+  assert.deepEqual(parseScheduleTime("11:58pm"), { hour: 23, minute: 55 });
+  assert.deepEqual(parseScheduleTime("11:55pm"), { hour: 23, minute: 55 });
+  assert.deepEqual(parseScheduleTime("7:32am"), { hour: 7, minute: 30 });
+  assert.deepEqual(parseScheduleTime("8am"), { hour: 8, minute: 0 });
+  assert.throws(() => parseScheduleTime("noonish"), /couldn't read "noonish"/);
+});
+
 test("reads the local date and time in the bot's time zone", () => {
   // 2026-11-15 14:30 UTC is 9:30 AM Sunday in New York.
   const now = localNow("America/New_York", new Date("2026-11-15T14:30:00Z"));
@@ -147,6 +155,28 @@ test("/digest setup saves the schedule; only managers can set it up", async () =
     /Only people who can manage channels/,
   );
   await assert.rejects(digest(interaction("digest", "off", [], "0"), { DB: db }), /Only people who can manage channels/);
+});
+
+test("a digest set for 11:58pm says 11:55pm and posts on that night's last run", async () => {
+  const db = fakeDb();
+  const calls = mock([["anthropic", () => ({ stop_reason: "end_turn", content: [{ type: "text", text: "- [A](<https://a>) b" }] })]]);
+  await digest(
+    interaction("digest", "setup", [
+      { name: "topics", value: "AI news" },
+      { name: "channel", value: "news" },
+      { name: "time", value: "11:58pm" },
+    ]),
+    { DB: db, TIMEZONE: "America/New_York" },
+  );
+  assert.match(lastEdit(calls).content, /Daily digest set for <#news> at \*\*11:55pm\*\*/);
+  const saved = db.tables.digests.get("news");
+  assert.equal(saved.minute, 55);
+
+  saved.last_sent = null;
+  // The last 5-minute run of the day: 11:55pm New York is 04:55 UTC the next day.
+  const now = localNow("America/New_York", new Date("2026-11-16T04:55:00Z"));
+  assert.equal(now.minutes, 23 * 60 + 55);
+  assert.equal(await postDueDigests({ DB: db }, { now }), 1);
 });
 
 test("due digests post once, claimed before posting", async () => {
@@ -250,6 +280,23 @@ test("/wrapped setup saves a weekly schedule and the 5-minute run posts it on th
   assert.equal(await postDueWrapped({ DB: db }, { now: sundayEvening }), 0, "only once");
   const monday = { date: "2026-11-16", day: 16, weekday: 1, minutes: 18 * 60 + 3 };
   assert.equal(await postDueWrapped({ DB: db }, { now: monday }), 0, "wrong day");
+});
+
+test("/wrapped setup rounds a late-night time down and says so", async () => {
+  const db = fakeDb();
+  const calls = mock(serverFixture(Date.now()));
+  await wrapped(
+    interaction("wrapped", "setup", [
+      { name: "channel", value: "bot" },
+      { name: "day", value: "sunday" },
+      { name: "time", value: "23:59" },
+    ]),
+    { DB: db, TIMEZONE: "America/New_York" },
+  );
+  assert.equal(db.tables.wrapped.get("bot").minute, 55);
+  assert.match(lastEdit(calls).content, /every Sunday at 11:55pm/);
+  const sundayLastRun = { date: "2026-11-15", day: 15, weekday: 0, minutes: 23 * 60 + 55 };
+  assert.ok(isDue({ ...db.tables.wrapped.get("bot"), last_sent: null }, sundayLastRun));
 });
 
 test("the 5-minute trigger runs scheduled posts and nothing else", async () => {

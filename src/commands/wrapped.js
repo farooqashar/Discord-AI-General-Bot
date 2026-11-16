@@ -16,7 +16,7 @@ import {
   getSubcommand,
   sendChannelMessage,
 } from "../discord.js";
-import { WEEKDAYS, formatTime, initialLastSent, isDue, localNow, parseTime } from "../schedule.js";
+import { WEEKDAYS, formatTime, initialLastSent, isDue, localNow, parseScheduleTime } from "../schedule.js";
 import { computeStats, fetchServerMessages, isPublicChannel } from "./stats.js";
 
 const DEFAULT_TIME = "6pm";
@@ -160,7 +160,7 @@ export async function wrapped(interaction, env) {
     const aboutChannelId = getOption(interaction, "about") ?? null;
     const frequency = getOption(interaction, "frequency") ?? "weekly";
     const weekday = WEEKDAYS.indexOf(getOption(interaction, "day") ?? "sunday");
-    const time = parseTime(getOption(interaction, "time") ?? DEFAULT_TIME);
+    const time = parseScheduleTime(getOption(interaction, "time") ?? DEFAULT_TIME);
     if (aboutChannelId) await assertPublic(env, interaction.guild_id, aboutChannelId);
 
     const schedule = { frequency, weekday, ...time };
