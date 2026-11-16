@@ -2,7 +2,7 @@
 //
 // Each night at the set time, the bot reads the last 24 hours of the channel,
 // asks the AI which messages clearly match the rule, and pins up to
-// MAX_PINS_PER_DAY of them. The optional report lists jump links only, never
+// `max_pins` of them (default 5, up to 20). The optional report lists jump links only, never
 // message text, so a report channel can't leak a private channel's content.
 
 import { extractStructured } from "../claude.js";
@@ -22,23 +22,27 @@ import {
 import { formatTime, initialLastSent, isDue, localNow, parseScheduleTime } from "../schedule.js";
 
 const DEFAULT_TIME = "11pm";
-const MAX_PINS_PER_DAY = 5;
+export const DEFAULT_MAX_PINS = 5;
+// Each pin is its own request, and a scheduled run gets 50, so cap it here.
+export const MAX_PINS_LIMIT = 20;
 const SCAN_MESSAGES = 300;
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_PINS_ERROR = 30003; // Discord: "Maximum number of pins reached"
 
-const SCHEMA = {
+const schema = (max) => ({
   type: "object",
   properties: {
     indexes: {
       type: "array",
       items: { type: "integer" },
-      maxItems: MAX_PINS_PER_DAY,
-      description: `Indexes of messages that clearly match, best first (at most ${MAX_PINS_PER_DAY}; empty if none match)`,
+      maxItems: max,
+      description: `Indexes of messages that clearly match, best first (at most ${max}; empty if none match)`,
     },
   },
   required: ["indexes"],
-};
+});
+
+const clampMax = (n) => Math.min(MAX_PINS_LIMIT, Math.max(1, Number(n) || DEFAULT_MAX_PINS));
 
 async function ensureTable(env) {
   await env.DB.prepare(
@@ -54,6 +58,8 @@ async function ensureTable(env) {
        created_at INTEGER NOT NULL DEFAULT (unixepoch())
      )`,
   ).run();
+  // Tables made before the daily limit was adjustable lack this column.
+  await env.DB.prepare("ALTER TABLE auto_pins ADD COLUMN max_pins INTEGER").run().catch(() => {});
 }
 
 const short = (text, n) => {
@@ -62,7 +68,8 @@ const short = (text, n) => {
 };
 
 /** The last day's unpinned, human messages in a channel that match the rule. */
-export async function findMatches(env, channelId, rule) {
+export async function findMatches(env, channelId, rule, maxPins = DEFAULT_MAX_PINS) {
+  const max = clampMax(maxPins);
   const since = new Date(Date.now() - WINDOW_MS);
   const history = await fetchHistory(env, channelId, SCAN_MESSAGES, { since });
   const pool = history.filter((m) => !m.author?.bot && !m.pinned && m.content?.trim()).reverse();
@@ -77,11 +84,11 @@ export async function findMatches(env, channelId, rule) {
       pool.map((m, i) => `${i}: ${authorName(m)}: ${short(m.content, 300)}`).join("\n"),
     toolName: "pick_messages",
     description: "Choose which messages to pin",
-    schema: SCHEMA,
+    schema: schema(max),
   });
 
   const picked = [...new Set(indexes)].filter((i) => Number.isInteger(i) && pool[i]);
-  return picked.slice(0, MAX_PINS_PER_DAY).map((i) => pool[i]);
+  return picked.slice(0, max).map((i) => pool[i]);
 }
 
 /** Pin messages; returns which were pinned and whether the channel is full. */
@@ -107,7 +114,7 @@ export async function pinAll(env, channelId, messages) {
 const link = (guildId, channelId, id) => `https://discord.com/channels/${guildId}/${channelId}/${id}`;
 
 function describe(p) {
-  return `<#${p.channel_id}>: "${p.rule}" at ${formatTime(p)}${p.report_channel_id ? `, report in <#${p.report_channel_id}>` : ""}`;
+  return `<#${p.channel_id}>: "${p.rule}" at ${formatTime(p)}, up to ${clampMax(p.max_pins)}/day${p.report_channel_id ? `, report in <#${p.report_channel_id}>` : ""}`;
 }
 
 export async function autoPin(interaction, env) {
@@ -126,17 +133,18 @@ export async function autoPin(interaction, env) {
     const rule = getOption(interaction, "rule").trim();
     const time = parseScheduleTime(getOption(interaction, "time") ?? DEFAULT_TIME);
     const reportChannelId = getOption(interaction, "report") ?? null;
+    const maxPins = clampMax(getOption(interaction, "max"));
     const lastSent = initialLastSent({ frequency: "daily", ...time }, localNow(timeZone));
     await env.DB.prepare(
-      `INSERT INTO auto_pins (channel_id, guild_id, rule, hour, minute, report_channel_id, last_sent, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO auto_pins (channel_id, guild_id, rule, hour, minute, report_channel_id, last_sent, created_by, max_pins)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(channel_id) DO UPDATE SET rule = excluded.rule, hour = excluded.hour, minute = excluded.minute,
-         report_channel_id = excluded.report_channel_id, last_sent = excluded.last_sent`,
+         report_channel_id = excluded.report_channel_id, last_sent = excluded.last_sent, max_pins = excluded.max_pins`,
     )
-      .bind(channelId, interaction.guild_id, rule, time.hour, time.minute, reportChannelId, lastSent, interaction.member?.user?.id ?? null)
+      .bind(channelId, interaction.guild_id, rule, time.hour, time.minute, reportChannelId, lastSent, interaction.member?.user?.id ?? null, maxPins)
       .run();
     await reply(
-      `📌 Every day at **${formatTime(time)}** I'll pin up to ${MAX_PINS_PER_DAY} messages from the last 24 hours in <#${channelId}> that match:\n> ${rule}\n` +
+      `📌 Every day at **${formatTime(time)}** I'll pin up to ${maxPins} messages from the last 24 hours in <#${channelId}> that match:\n> ${rule}\n` +
         "Run `/auto-pin now` there to preview what I'd pick.",
     );
     return;
@@ -152,13 +160,11 @@ export async function autoPin(interaction, env) {
   if (action === "now") {
     // A preview: shows what would be pinned, pins nothing.
     const channelId = targetChannel(interaction, "preview");
-    let rule = getOption(interaction, "rule");
-    if (!rule) {
-      const saved = await env.DB.prepare("SELECT rule FROM auto_pins WHERE channel_id = ?").bind(channelId).first();
-      rule = saved?.rule;
-    }
+    const saved = await env.DB.prepare("SELECT rule, max_pins FROM auto_pins WHERE channel_id = ?").bind(channelId).first();
+    const rule = getOption(interaction, "rule") ?? saved?.rule;
+    const maxPins = clampMax(getOption(interaction, "max") ?? saved?.max_pins);
     if (!rule) throw new UserFacingError('🤔 Tell me what to look for, like `/auto-pin now rule:"restaurant recs"`.');
-    const matches = await findMatches(env, channelId, rule);
+    const matches = await findMatches(env, channelId, rule, maxPins);
     await reply(
       matches.length
         ? `📌 **Preview:** I'd pin ${matches.length} from the last 24 hours in <#${channelId}> (nothing was pinned):\n` +
@@ -177,8 +183,11 @@ export async function autoPin(interaction, env) {
   );
 }
 
-/** Run the auto-pins that are due. Called from the 5-minute cron. */
-export async function runDueAutoPins(env, { limit = 2, now = localNow(env.TIMEZONE || "America/New_York") } = {}) {
+/**
+ * Run the auto-pins that are due, one per run: with up to 20 pins, one can use
+ * about 25 of the run's 50 requests. Others go out on the next 5-minute run.
+ */
+export async function runDueAutoPins(env, { limit = 1, now = localNow(env.TIMEZONE || "America/New_York") } = {}) {
   if (!env.DB) return 0;
   await ensureTable(env);
   const { results } = await env.DB.prepare("SELECT * FROM auto_pins").all();
@@ -188,7 +197,7 @@ export async function runDueAutoPins(env, { limit = 2, now = localNow(env.TIMEZO
     // Claim it first so an overlapping run can't pin twice.
     await env.DB.prepare("UPDATE auto_pins SET last_sent = ? WHERE channel_id = ?").bind(now.date, p.channel_id).run();
     try {
-      const matches = await findMatches(env, p.channel_id, p.rule);
+      const matches = await findMatches(env, p.channel_id, p.rule, p.max_pins);
       if (!matches.length) continue;
       const { pinned, full } = await pinAll(env, p.channel_id, matches);
       if (p.report_channel_id && (pinned.length || full)) {

@@ -13,7 +13,7 @@ const MANAGE = String((1n << 4n) | (1n << 10n) | (1n << 16n));
 
 function fakeDb() {
   const table = new Map();
-  const cols = ["channel_id", "guild_id", "rule", "hour", "minute", "report_channel_id", "last_sent", "created_by"];
+  const cols = ["channel_id", "guild_id", "rule", "hour", "minute", "report_channel_id", "last_sent", "created_by", "max_pins"];
   const stmt = (sql, args = []) => ({
     run: async () => {
       if (sql.startsWith("INSERT")) table.set(args[0], Object.fromEntries(cols.map((c, i) => [c, args[i] ?? null])));
@@ -110,6 +110,7 @@ test("/auto-pin setup needs Manage Channels and a channel you can read", async (
       { name: "rule", value: "restaurant recs and confirmed plans" },
       { name: "time", value: "11:58pm" },
       { name: "report", value: "bot" },
+      { name: "max", value: 12 },
     ]),
     { DB: db, TIMEZONE: "America/New_York" },
   );
@@ -118,7 +119,8 @@ test("/auto-pin setup needs Manage Channels and a channel you can read", async (
   assert.equal(saved.hour, 23);
   assert.equal(saved.minute, 55, "rounded down so the 5-minute run reaches it");
   assert.equal(saved.report_channel_id, "bot");
-  assert.match(lastEdit(calls).content, /Every day at \*\*11:55pm\*\*/);
+  assert.equal(saved.max_pins, 12);
+  assert.match(lastEdit(calls).content, /Every day at \*\*11:55pm\*\* I'll pin up to 12 messages/);
 
   await assert.rejects(
     autoPin(interaction("setup", [{ name: "channel", value: "general" }, { name: "rule", value: "x" }], READ), { DB: db }),
@@ -175,4 +177,25 @@ test("previewing a private channel replies privately", async () => {
   ]);
   const i = interaction("now", [{ name: "channel", value: "staff" }]);
   assert.equal(await replyFlags(i, {}), 1 << 6);
+});
+
+test("the daily limit is adjustable, capped at 20, and passed to the AI", async () => {
+  const many = Array.from({ length: 30 }, (_, i) => ({
+    id: String(100 - i),
+    content: `"quote ${i}" - sam`,
+    timestamp: iso(1),
+    author: { id: "s", username: "sam" },
+  }));
+  let maxItems;
+  mock([
+    ["anthropic", (_u, body) => {
+      maxItems = body.tools[0].input_schema.properties.indexes.maxItems;
+      return { content: [{ type: "tool_use", name: "pick_messages", input: { indexes: Array.from({ length: 30 }, (_, i) => i) } }] };
+    }],
+    ["/channels/quotes/messages", () => many],
+  ]);
+  assert.equal((await findMatches({}, "quotes", "quotes", 12)).length, 12);
+  assert.equal(maxItems, 12);
+  assert.equal((await findMatches({}, "quotes", "quotes", 99)).length, 20, "never more than 20");
+  assert.equal((await findMatches({}, "quotes", "quotes", null)).length, 5, "default 5");
 });

@@ -267,6 +267,7 @@ const DEFINITIONS = [
           { type: 3, name: "rule", description: 'What to pin, e.g. "restaurant recs and confirmed plans"', required: true, max_length: 200 },
           { type: 3, name: "time", description: 'When to check each day (Eastern; default 11pm)', max_length: 10 },
           { type: 7, name: "report", description: "Optional: post links to what got pinned here", channel_types: [0, 5] },
+          { type: 4, name: "max", description: "Most messages to pin per day (1–20, default 5)", min_value: 1, max_value: 20 },
         ],
       },
       {
@@ -276,6 +277,7 @@ const DEFINITIONS = [
         options: [
           { type: 7, name: "channel", description: "Which channel (defaults to this one)", channel_types: [0, 5] },
           { type: 3, name: "rule", description: "What to look for (defaults to the saved rule)", max_length: 200 },
+          { type: 4, name: "max", description: "Most to pick (1–20, defaults to the saved limit)", min_value: 1, max_value: 20 },
         ],
       },
       {
