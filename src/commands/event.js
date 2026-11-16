@@ -2,6 +2,7 @@ import { describeNow, extractStructured } from "../claude.js";
 import {
   NO_MENTIONS,
   UserFacingError,
+  canCreateEvents,
   discordApi,
   discordTimestamp,
   editOriginal,
@@ -66,6 +67,9 @@ export async function event(interaction, env) {
   if (!interaction.guild_id) {
     await replyWithText(env, interaction, "Events can only be created inside a server.");
     return;
+  }
+  if (!canCreateEvents(interaction)) {
+    throw new UserFacingError("🔒 Only people who can create events in this server can use /event.");
   }
 
   const timeZone = env.TIMEZONE || "America/New_York";

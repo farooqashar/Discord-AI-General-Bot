@@ -176,6 +176,12 @@ export function canManageChannels(interaction) {
   return (perms & ((1n << 3n) | (1n << 4n) | (1n << 5n))) !== 0n; // admin, manage channels, manage server
 }
 
+/** Can the person running the command create server events? */
+export function canCreateEvents(interaction) {
+  const perms = BigInt(interaction.member?.permissions ?? 0);
+  return (perms & ((1n << 3n) | (1n << 33n) | (1n << 44n))) !== 0n; // admin, manage events, create events
+}
+
 /** The Discord user who ran the command (works in servers and DMs). */
 export function invokingUser(interaction) {
   return interaction.member?.user ?? interaction.user;

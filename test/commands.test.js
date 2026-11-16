@@ -105,7 +105,9 @@ test("/event creates the Discord event and shows the Google Calendar button", as
     discord: (url) => (url.includes("scheduled-events") ? { id: "ev1", name: "Board game night" } : { id: "m" }),
   });
 
-  await event(interaction("event", [{ name: "details", value: "board games saturday 8pm" }]), {});
+  const withCreateEvents = interaction("event", [{ name: "details", value: "board games saturday 8pm" }]);
+  withCreateEvents.member.permissions = String(1n << 44n);
+  await event(withCreateEvents, {});
 
   const created = calls.find((c) => c.url.includes("/guilds/guild/scheduled-events"));
   assert.equal(created.body.entity_metadata.location, "Ashar's place");
@@ -114,6 +116,17 @@ test("/event creates the Discord event and shows the Google Calendar button", as
   assert.equal(buttons[0].label, "Add to Google Calendar");
   assert.match(buttons[0].url, /^https:\/\/calendar\.google\.com\/calendar\/render\?action=TEMPLATE/);
   assert.equal(buttons[1].url, "https://discord.com/events/guild/ev1");
+});
+
+test("/event refuses members who can't create events, without creating one", async () => {
+  const calls = mockFetch({ claude: () => assert.fail("shouldn't call Claude") });
+  const noPerms = interaction("event", [{ name: "details", value: "party saturday 8pm" }]);
+  noPerms.member.permissions = String(1n << 11n); // send messages only
+  await assert.rejects(event(noPerms, {}), /Only people who can create events/);
+  assert.ok(!calls.some((c) => c.url.includes("scheduled-events")));
+
+  const command = COMMANDS.find((c) => c.name === "event");
+  assert.equal(command.default_member_permissions, String((1n << 33n) | (1n << 44n)));
 });
 
 test("/trivia hides the answer in a spoiler and includes all four choices", async () => {

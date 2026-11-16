@@ -49,6 +49,7 @@ const DEFINITIONS = [
   {
     name: "event",
     description: "Create a server event from a plain-English description",
+    default_member_permissions: String((1n << 33n) | (1n << 44n)), // manage events, create events
     options: [
       {
         type: 3,
