@@ -202,6 +202,24 @@ export function isPublicChannel(guild, channel) {
   return canRead(channelPermissions(EVERYONE, guild.id, channel, basePermissions(guild, EVERYONE)));
 }
 
+const THREAD_TYPES = new Set([10, 11, 12]);
+const PRIVATE_THREAD = 12;
+
+/**
+ * Look up whether every member of the server can read a channel or thread.
+ * Threads have no overrides of their own, so they follow their parent
+ * channel, and private threads never count as public.
+ */
+export async function channelIsPublic(env, guildId, channelId) {
+  const [guild, channel] = await Promise.all([
+    discordApi(env, `/guilds/${guildId}`),
+    discordApi(env, `/channels/${channelId}`),
+  ]);
+  if (channel.type === PRIVATE_THREAD) return false;
+  const source = THREAD_TYPES.has(channel.type) ? await discordApi(env, `/channels/${channel.parent_id}`) : channel;
+  return isPublicChannel(guild, source);
+}
+
 /**
  * Messages from every channel `member` can read (or, with no member, every
  * public channel), busiest-recently first, within the request budget.
@@ -281,10 +299,12 @@ export async function stats(interaction, env) {
   let note;
   let channelId = interaction.channel_id;
   if (server) {
-    const result = await fetchServerMessages(env, { guildId: interaction.guild_id, member: interaction.member, since });
+    // The reply is public, so count only channels everyone can read, or it
+    // could quote a private channel to people who can't see it.
+    const result = await fetchServerMessages(env, { guildId: interaction.guild_id, member: null, since });
     messages = result.messages.filter((m) => !m.author?.bot);
     where = "the server";
-    const parts = [`${result.read} channel${result.read === 1 ? "" : "s"} you can read`];
+    const parts = [`${result.read} channel${result.read === 1 ? "" : "s"} everyone can read`];
     if (result.failed) parts.push(`${result.failed} couldn't be read right now`);
     if (result.stoppedEarly) parts.push("stopped early on the busiest channels; try fewer days for a full count");
     note = parts.join(" · ");

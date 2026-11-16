@@ -138,7 +138,7 @@ test("snowflake IDs convert to the time they were made", () => {
 // A snowflake for "hoursAgo" hours ago, so channels look recently active.
 const snowAt = (ms) => String((BigInt(ms) - 1420070400000n) << 22n);
 
-test("server-wide /stats reads only channels the asker can read and skips quiet ones", async () => {
+test("server-wide /stats reads only channels everyone can read and skips quiet ones", async () => {
   const now = Date.now();
   const recent = snowAt(now - 3600000);
   const old = snowAt(now - 40 * 86400000);
@@ -185,7 +185,7 @@ test("server-wide /stats reads only channels the asker can read and skips quiet 
   const text = edits.at(-1).content;
   assert.match(text, /^📊 \*\*Stats for the server\*\* · last 7 days/);
   assert.match(text, /\*\*4\*\* messages from \*\*2\*\* people/);
-  assert.match(text, /\*\(2 channels you can read\)\*/);
+  assert.match(text, /\*\(2 channels everyone can read\)\*/);
   assert.match(text, /\*\*Most active channels\*\*\n`▰▰▰▰▰▰▰▰` <#(general|food)> · 2/);
 });
 
@@ -275,4 +275,42 @@ test("server-wide /stats skips a channel that errors and stops cleanly at the re
   assert.match(text, /\*\*2\*\* messages from \*\*2\*\* people/, "kept what it could read");
   assert.match(text, /1 couldn't be read right now/);
   assert.match(text, /stopped early/);
+});
+
+test("server-wide /stats leaves out a private channel even when the asker can read it", async () => {
+  const now = Date.now();
+  const recent = snowAt(now - 3600000);
+  const channels = [
+    { id: "general", type: 0, last_message_id: recent, permission_overwrites: [] },
+    {
+      id: "staff",
+      type: 0,
+      last_message_id: recent,
+      permission_overwrites: [
+        { id: "g", type: 0, allow: "0", deny: String(VIEW) },
+        { id: "mods", type: 0, allow: READ, deny: "0" },
+      ],
+    },
+  ];
+  const fetched = [];
+  const edits = [];
+  globalThis.fetch = async (url, init = {}) => {
+    url = String(url);
+    if (url.endsWith("/guilds/g/channels")) return Response.json(channels);
+    if (url.endsWith("/guilds/g")) return Response.json({ id: "g", owner_id: "owner", roles: [{ id: "g", permissions: READ }, { id: "mods", permissions: READ }] });
+    const id = url.match(/\/channels\/(\w+)\/messages/)?.[1];
+    if (id) {
+      fetched.push(id);
+      const reactions = id === "staff" ? [{ count: 9, emoji: { name: "👀" } }] : [];
+      return Response.json([{ id: `${id}1`, content: `${id} secret plans`, timestamp: new Date(now - 1000).toISOString(), author: { id, username: id }, reactions }]);
+    }
+    edits.push(JSON.parse(init.body));
+    return Response.json({ id: "1" });
+  };
+  await stats(
+    { application_id: "app", token: "t", channel_id: "general", guild_id: "g", member: { user: { id: "me" }, roles: ["mods"], permissions: READ }, data: { options: [] } },
+    {},
+  );
+  assert.deepEqual(fetched, ["general"]);
+  assert.doesNotMatch(edits.at(-1).content, /staff/);
 });
