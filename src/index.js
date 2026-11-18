@@ -6,6 +6,8 @@
 
 import { ask } from "./commands/ask.js";
 import { autoPin, runDueAutoPins } from "./commands/auto-pin.js";
+import { birthday, postDueBirthdays } from "./commands/birthday.js";
+import { catchup } from "./commands/catchup.js";
 import { decide } from "./commands/decide.js";
 import { digest, postDueDigests } from "./commands/digest.js";
 import { eli5 } from "./commands/eli5.js";
@@ -52,6 +54,8 @@ export const HANDLERS = {
   digest,
   wrapped,
   "auto-pin": autoPin,
+  catchup,
+  birthday,
   roast,
 };
 
@@ -74,11 +78,12 @@ export function errorRef(err) {
 
 export const SCHEDULED_POSTS_CRON = "*/5 * * * *";
 
-/** One Wrapped per run if any is due (it reads many channels); otherwise digests, then auto-pins. */
+/** One Wrapped per run if any is due (it reads many channels); otherwise digests, birthdays, then auto-pins. */
 export async function runScheduledPosts(env) {
   try {
     if (await postDueWrapped(env)) return;
     await postDueDigests(env);
+    await postDueBirthdays(env);
     await runDueAutoPins(env);
   } catch (err) {
     console.error("Scheduled posts failed:", err);
@@ -87,7 +92,7 @@ export async function runScheduledPosts(env) {
 
 // Commands whose `channel` option reads another channel and posts what it
 // finds where the command was run.
-const READS_OTHER_CHANNELS = new Set(["ask", "tldr", "vibe-check", "roast", "stats", "auto-pin"]);
+const READS_OTHER_CHANNELS = new Set(["ask", "tldr", "vibe-check", "roast", "stats", "auto-pin", "catchup"]);
 const PRIVACY_CHECK_MS = 1500;
 
 /**
@@ -99,6 +104,8 @@ const PRIVACY_CHECK_MS = 1500;
  * slow, the reply is ephemeral.
  */
 export async function replyFlags(interaction, env) {
+  // /catchup is only for you unless you ask to share it.
+  if (interaction.data.name === "catchup" && getOption(interaction, "public") !== true) return EPHEMERAL;
   if (!READS_OTHER_CHANNELS.has(interaction.data.name)) return undefined;
   const channelId = getOption(interaction, "channel");
   if (!channelId || channelId === interaction.channel_id) return undefined;

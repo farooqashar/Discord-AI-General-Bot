@@ -290,6 +290,45 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "catchup",
+    description: "What you missed in a channel since your last message",
+    options: [
+      { type: 7, name: "channel", description: "Which channel (defaults to this one)", channel_types: [0, 5, 11] },
+      { type: 5, name: "public", description: "Post it for everyone here (default: only you see it)" },
+    ],
+  },
+  {
+    name: "birthday",
+    description: "Save birthdays and get a happy-birthday post on the day",
+    options: [
+      {
+        type: 1,
+        name: "set",
+        description: "Save your birthday (month and day, no year)",
+        options: [
+          { type: 3, name: "date", description: 'e.g. "9/27" or "Sep 27"', required: true, max_length: 20 },
+          { type: 6, name: "user", description: "Someone else (needs Manage Channels)" },
+        ],
+      },
+      {
+        type: 1,
+        name: "remove",
+        description: "Delete your saved birthday",
+        options: [{ type: 6, name: "user", description: "Someone else (needs Manage Channels)" }],
+      },
+      { type: 1, name: "list", description: "Show upcoming birthdays" },
+      {
+        type: 1,
+        name: "channel",
+        description: "Choose where birthday wishes go (needs Manage Channels)",
+        options: [
+          { type: 7, name: "channel", description: "Where to post wishes (defaults to this one)", channel_types: [0, 5] },
+          { type: 3, name: "time", description: 'When on the day (Eastern; default 9am)', max_length: 10 },
+        ],
+      },
+    ],
+  },
+  {
     name: "listen",
     description: "Answer @mentions in this channel (replies within about a minute)",
     options: [
