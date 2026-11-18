@@ -22,6 +22,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/auto-pin setup channel rule [time] [report] [max]` | Once a day (default 11pm), pins up to 5 messages (or `max:` up to 20) from the last 24 hours in a channel that match a description, like "restaurant recs and confirmed plans". Never re-pins. The optional report channel gets jump links only, no message text. Also `now` (preview, pins nothing), `off`, `list`. Needs the Pin Messages permission. |
 | `/catchup [channel] [public]` | What you missed since your last message in a channel (or the last 24 hours): a short summary plus links to anything that mentions, replies to or asks you something. Only you see it unless `public:true`, and it always stays private for private channels. |
 | `/birthday set/remove/list/channel` | Save birthdays (month and day only). On the day, the bot posts a short wish in the chosen channel and pings the birthday person. Setting someone else's birthday or the channel needs Manage Channels. |
+| `/quotes random/top/site/setup/off` | The Quote Book. `/quotes setup channel:#quotes` (Manage Channels; the channel must be one everyone can see) imports the channel's quotes and keeps saving new ones every 5 minutes. `random` pulls one (optionally `from` someone or matching `search`), `top` shows the most ⭐-starred, `site` links the members-only website. Quotes with 3+ ⭐ reactions get pinned. |
 | `/listen [on/off/status]` | Turns on @mention replies in a channel (admins only). The bot then answers anyone who @mentions it or replies to its messages there, within about a minute. |
 | `/roast @user [heat] [channel]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
 
@@ -37,6 +38,7 @@ src/
   claude.js              Anthropic API wrapper and structured extraction
   command-definitions.js Slash command names, descriptions and options
   commands/              One file per command
+  web/                   Quote Book website and Sign in with Discord
 scripts/register-commands.js   Registers the commands with Discord
 migrations/                    D1 table for reminders
 ```
@@ -73,6 +75,16 @@ Then try `/ask` in your server.
 ## @mentions
 
 Discord only sends ordinary messages to bots that stay connected all the time, which this one doesn't. Instead, the every-minute cron checks the channels turned on with `/listen on` for new messages that @mention the bot or reply to it, and answers them as real replies, using the recent chat as context. Replies take up to about a minute. It never answers messages from before listening was turned on, and answers at most 5 mentions per channel per minute.
+
+## Quote Book website
+
+`/quotes site` links to `<worker url>/quotes/<server id>`. Visitors click **Sign in with Discord**; Discord tells the Worker who they are and which servers they're in (scopes `identify guilds`), and only members of that server see its quotes. Nobody else, including people who sign in but aren't in the server, sees anything. Sign-ins last 7 days; the Worker keeps only the user's ID, name and server list, never Discord's access token. The page has no JavaScript and escapes all quote text.
+
+One-time setup:
+
+1. Discord Developer Portal → your app → **OAuth2** → **Redirects** → add `https://<worker url>/auth/callback` and save. On the same page, copy the **Client Secret** (click Reset Secret if it's hidden).
+2. Cloudflare → the Worker → **Settings → Variables and Secrets** → add `DISCORD_CLIENT_SECRET` as a **Secret**.
+3. Make sure `PUBLIC_URL` in `wrangler.toml` is the Worker's URL.
 
 ## Scheduled posts
 

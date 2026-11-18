@@ -8,6 +8,8 @@ import { ask } from "./commands/ask.js";
 import { autoPin, runDueAutoPins } from "./commands/auto-pin.js";
 import { birthday, postDueBirthdays } from "./commands/birthday.js";
 import { catchup } from "./commands/catchup.js";
+import { quotes, syncDueQuoteBooks } from "./commands/quotes.js";
+import { handleWeb } from "./web/quotes-site.js";
 import { decide } from "./commands/decide.js";
 import { digest, postDueDigests } from "./commands/digest.js";
 import { eli5 } from "./commands/eli5.js";
@@ -56,6 +58,7 @@ export const HANDLERS = {
   "auto-pin": autoPin,
   catchup,
   birthday,
+  quotes,
   roast,
 };
 
@@ -78,13 +81,14 @@ export function errorRef(err) {
 
 export const SCHEDULED_POSTS_CRON = "*/5 * * * *";
 
-/** One Wrapped per run if any is due (it reads many channels); otherwise digests, birthdays, then auto-pins. */
+/** One Wrapped per run if any is due (it reads many channels); otherwise digests, birthdays, auto-pins and quote books. */
 export async function runScheduledPosts(env) {
   try {
     if (await postDueWrapped(env)) return;
     await postDueDigests(env);
     await postDueBirthdays(env);
     await runDueAutoPins(env);
+    await syncDueQuoteBooks(env);
   } catch (err) {
     console.error("Scheduled posts failed:", err);
   }
@@ -143,7 +147,15 @@ async function runCommand(handler, interaction, env) {
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === "GET") return new Response("OK");
+    if (request.method === "GET") {
+      // The Quote Book website and its Discord sign-in; anything else is a health check.
+      try {
+        return (await handleWeb(request, env)) ?? new Response("OK");
+      } catch (err) {
+        console.error("Web request failed:", err);
+        return new Response("Something went wrong loading this page. Try again in a moment.", { status: 500 });
+      }
+    }
     if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
     const { valid, body } = await verifyDiscordRequest(request, env.DISCORD_PUBLIC_KEY);

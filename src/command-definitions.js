@@ -329,6 +329,30 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "quotes",
+    description: "The Quote Book: every quote from the quotes channel, plus a members-only website",
+    options: [
+      {
+        type: 1,
+        name: "random",
+        description: "A random saved quote",
+        options: [
+          { type: 3, name: "from", description: "Only quotes from this person (name)", max_length: 60 },
+          { type: 3, name: "search", description: "Only quotes containing these words", max_length: 100 },
+        ],
+      },
+      { type: 1, name: "top", description: "The most-starred quotes" },
+      { type: 1, name: "site", description: "Get the link to the Quote Book website" },
+      {
+        type: 1,
+        name: "setup",
+        description: "Start saving quotes from a channel (needs Manage Channels)",
+        options: [{ type: 7, name: "channel", description: "Your quotes channel (defaults to this one)", channel_types: [0, 5] }],
+      },
+      { type: 1, name: "off", description: "Stop saving new quotes (needs Manage Channels)" },
+    ],
+  },
+  {
     name: "listen",
     description: "Answer @mentions in this channel (replies within about a minute)",
     options: [

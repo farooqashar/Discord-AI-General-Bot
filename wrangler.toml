@@ -17,6 +17,8 @@ DEFAULT_AREA = "New York, NY"
 # Your Discord Application ID (not a secret). Lets the bot re-register its
 # slash commands automatically after a deploy changes them.
 DISCORD_APP_ID = "1570256194399117313"
+# Where the bot's web pages (the Quote Book) are served.
+PUBLIC_URL = "https://discord-ai-general-bot.asharfarooq.workers.dev"
 
 # Stores pending /remind reminders and the last registered command list.
 [[d1_databases]]
@@ -34,4 +36,5 @@ crons = ["* * * * *", "*/5 * * * *"]
 enabled = true
 
 # Secrets (set in the Cloudflare dashboard under Settings → Variables and Secrets):
-#   DISCORD_PUBLIC_KEY, DISCORD_TOKEN, ANTHROPIC_API_KEY
+#   DISCORD_PUBLIC_KEY, DISCORD_TOKEN, ANTHROPIC_API_KEY,
+#   DISCORD_CLIENT_SECRET (for "Sign in with Discord" on the Quote Book site)
