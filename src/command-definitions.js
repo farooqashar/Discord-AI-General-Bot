@@ -298,6 +298,33 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "countdown",
+    description: "Count down the days to something, with an alert when it arrives",
+    options: [
+      {
+        type: 1,
+        name: "add",
+        description: "Start a countdown; I'll post in this channel when it hits zero",
+        options: [
+          { type: 3, name: "name", description: 'e.g. "Japan trip"', required: true, max_length: 100 },
+          { type: 3, name: "when", description: 'e.g. "March 14", "Friday at 6pm", "Dec 31 11:59pm"', required: true, max_length: 100 },
+        ],
+      },
+      {
+        type: 1,
+        name: "list",
+        description: "See how long is left",
+        options: [{ type: 3, name: "name", description: "Just one countdown", max_length: 100 }],
+      },
+      {
+        type: 1,
+        name: "remove",
+        description: "Delete a countdown",
+        options: [{ type: 3, name: "name", description: "Which countdown", required: true, max_length: 100 }],
+      },
+    ],
+  },
+  {
     name: "birthday",
     description: "Save birthdays and get a happy-birthday post on the day",
     options: [

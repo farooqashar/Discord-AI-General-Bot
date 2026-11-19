@@ -7,6 +7,7 @@
 import { ask } from "./commands/ask.js";
 import { autoPin, runDueAutoPins } from "./commands/auto-pin.js";
 import { birthday, postDueBirthdays } from "./commands/birthday.js";
+import { countdown, postDueCountdowns } from "./commands/countdown.js";
 import { catchup } from "./commands/catchup.js";
 import { quotes, syncDueQuoteBooks } from "./commands/quotes.js";
 import { handleWeb } from "./web/quotes-site.js";
@@ -58,6 +59,7 @@ export const HANDLERS = {
   "auto-pin": autoPin,
   catchup,
   birthday,
+  countdown,
   quotes,
   roast,
 };
@@ -203,6 +205,7 @@ export default {
       return;
     }
     ctx.waitUntil(postDueReminders(env));
+    ctx.waitUntil(postDueCountdowns(env).catch((err) => console.error("Posting countdown alerts failed:", err)));
     ctx.waitUntil(pollMentions(env).catch((err) => console.error("Checking for mentions failed:", err)));
     ctx.waitUntil(
       syncCommandsIfChanged(env).catch((err) => console.error("Syncing slash commands failed:", err)),
