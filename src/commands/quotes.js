@@ -51,6 +51,7 @@ export async function ensureQuoteTables(env) {
      )`,
   ).run();
   await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_quotes_guild ON quotes (guild_id, posted_at)").run();
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_quotes_speaker ON quotes (guild_id, speaker_id)").run();
 }
 
 const OPEN = `"“„«`;
@@ -65,8 +66,11 @@ function cleanSpeaker(raw) {
   return s && s.length <= 60 && !s.includes("\n") ? s : null;
 }
 
-/** A quote by pattern, or null. Free; catches the common formats. */
-export function detectQuote(content) {
+/**
+ * A quote by pattern, or null. Free; catches the common formats.
+ * `mentions` is the message's mentioned users, used to turn <@id> into names.
+ */
+export function detectQuote(content, mentions = []) {
   const text = (content ?? "").trim();
   if (text.length < 4) return null;
   let m = text.match(QUOTE_FIRST);
@@ -74,16 +78,63 @@ export function detectQuote(content) {
     const rest = (m[2] ?? "").trim();
     // Lots of text after the closing quote means it isn't just an attribution.
     if (rest && !cleanSpeaker(rest)) return null;
-    return withMention({ text: m[1].trim(), speaker: cleanSpeaker(rest) });
+    return withMention({ text: m[1].trim(), speaker: cleanSpeaker(rest) }, mentions);
   }
   m = text.match(SPEAKER_FIRST);
-  if (m) return withMention({ text: m[2].trim(), speaker: cleanSpeaker(m[1]) });
+  if (m) return withMention({ text: m[2].trim(), speaker: cleanSpeaker(m[1]) }, mentions);
   return null;
 }
 
-function withMention(q) {
+const mentionName = (u) => u.member?.nick ?? u.global_name ?? u.username ?? null;
+
+/**
+ * Store names, not raw <@id> mentions: the speaker becomes the person's display
+ * name (their ID stays in speakerId for pings), and mentions in the text become
+ * @Name. A mention we can't name leaves the speaker empty rather than "<@id>".
+ */
+function withMention(q, mentions = []) {
+  const names = new Map((mentions ?? []).map((u) => [u.id, mentionName(u)]));
   const mention = q.speaker?.match(/^<@!?(\d+)>$/);
-  return { ...q, speakerId: mention ? mention[1] : null };
+  const speakerId = mention ? mention[1] : null;
+  return {
+    text: q.text.replace(/<@!?(\d+)>/g, (raw, id) => (names.get(id) ? `@${names.get(id)}` : raw)),
+    speaker: speakerId ? names.get(speakerId) ?? null : q.speaker,
+    speakerId,
+  };
+}
+
+// A speaker stored as the bare mention of its own speaker_id, like "<@42>".
+const RAW_SPEAKER = (t) => `${t}.speaker IN ('<@' || ${t}.speaker_id || '>', '<@!' || ${t}.speaker_id || '>')`;
+const REPAIR_BATCH = 200;
+
+/**
+ * Older quotes were saved with "<@id>" as the speaker. Give them, and quotes
+ * whose mention couldn't be named, the name the same person has on another
+ * quote. Raw mentions with no name yet become Unknown but keep speaker_id, so
+ * a later name still reaches them. Compound speakers ("<@42> and Jo") have no
+ * speaker_id and are left alone. Each pass handles at most REPAIR_BATCH rows.
+ */
+export async function fixMentionSpeakers(env, guildId) {
+  const named = `SELECT q2.speaker FROM quotes q2
+       WHERE q2.guild_id = quotes.guild_id AND q2.speaker_id = quotes.speaker_id
+         AND q2.speaker IS NOT NULL AND q2.speaker <> '<@' || q2.speaker_id || '>' AND q2.speaker <> '<@!' || q2.speaker_id || '>'`;
+  await env.DB.prepare(
+    `UPDATE quotes SET speaker = (${named} ORDER BY q2.posted_at DESC LIMIT 1)
+     WHERE message_id IN (
+       SELECT message_id FROM quotes WHERE guild_id = ? AND speaker_id IS NOT NULL
+         AND (speaker IS NULL OR ${RAW_SPEAKER("quotes")}) AND EXISTS (${named})
+       LIMIT ${REPAIR_BATCH})`,
+  )
+    .bind(guildId)
+    .run();
+  await env.DB.prepare(
+    `UPDATE quotes SET speaker = NULL
+     WHERE message_id IN (
+       SELECT message_id FROM quotes WHERE guild_id = ? AND speaker_id IS NOT NULL AND ${RAW_SPEAKER("quotes")}
+       LIMIT ${REPAIR_BATCH})`,
+  )
+    .bind(guildId)
+    .run();
 }
 
 const QUOTE_SCHEMA = {
@@ -120,7 +171,7 @@ async function aiQuotes(env, messages) {
   });
   return quotes
     .filter((q) => Number.isInteger(q.index) && messages[q.index] && q.text?.trim())
-    .map((q) => ({ message: messages[q.index], quote: withMention({ text: q.text.trim(), speaker: cleanSpeaker(q.speaker) }) }));
+    .map((q) => ({ message: messages[q.index], quote: withMention({ text: q.text.trim(), speaker: cleanSpeaker(q.speaker) }, messages[q.index].mentions) }));
 }
 
 
@@ -133,7 +184,7 @@ export async function extractQuotes(env, messages) {
   const found = [];
   const leftovers = [];
   for (const m of candidates) {
-    const quote = detectQuote(m.content);
+    const quote = detectQuote(m.content, m.mentions);
     if (quote) found.push({ message: m, quote });
     else if (m.content.trim().length <= 500) leftovers.push(m);
   }
@@ -171,6 +222,15 @@ async function saveQuotes(env, guildId, channelId, found) {
         new Date(m.timestamp).getTime(),
       )
       .run();
+    // Re-imports (/quotes setup) repair quotes saved before mentions were named.
+    if (quote.speakerId || /<@!?\d+>/.test(m.content)) {
+      await env.DB.prepare(
+        `UPDATE quotes SET text = ?, speaker = ?, speaker_id = ?
+         WHERE message_id = ? AND (speaker IS NULL OR speaker LIKE '<@%' OR text LIKE '%<@%')`,
+      )
+        .bind(quote.text.slice(0, 1000), quote.speaker, quote.speakerId, m.id)
+        .run();
+    }
   }
 }
 
@@ -200,6 +260,7 @@ export async function syncQuoteBook(env, book) {
     await setCursor(before).catch(() => {});
     throw err;
   }
+  await fixMentionSpeakers(env, book.guild_id).catch((err) => console.warn(`Couldn't name mentioned speakers in ${book.guild_id}:`, err.message));
 
   return { added: found.length };
 }
@@ -269,6 +330,7 @@ export async function quotes(interaction, env) {
     const history = await fetchHistory(env, channelId, BACKFILL_MESSAGES);
     const { found } = await extractQuotes(env, history);
     await saveQuotes(env, guildId, channelId, found);
+    await fixMentionSpeakers(env, guildId);
     await env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(history.length ? newestId(history) : null, guildId).run();
 
     await reply(

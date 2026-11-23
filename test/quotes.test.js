@@ -47,6 +47,17 @@ function fakeDb() {
         if (!quotesT.has(message_id)) {
           quotesT.set(message_id, { message_id, guild_id, channel_id, text, speaker, speaker_id, poster_id, poster_name, posted_at, stars, reactions, pinned });
         }
+      } else if (sql.startsWith("UPDATE quotes SET text")) {
+        const q = quotesT.get(args[3]);
+        if (q && (q.speaker == null || q.speaker.startsWith("<@") || /<@/.test(q.text))) Object.assign(q, { text: args[0], speaker: args[1], speaker_id: args[2] });
+      } else if (sql.startsWith("UPDATE quotes SET speaker")) {
+        const rows = [...quotesT.values()].filter((q) => q.guild_id === args[0]);
+        const raw = (r) => r.speaker_id && [`<@${r.speaker_id}>`, `<@!${r.speaker_id}>`].includes(r.speaker);
+        const name = (q) => rows.find((r) => r.speaker_id === q.speaker_id && r.speaker && !raw(r))?.speaker;
+        for (const q of rows.filter((r) => r.speaker_id && (r.speaker == null || raw(r)))) {
+          if (sql.startsWith("UPDATE quotes SET speaker = NULL")) q.speaker = raw(q) ? null : q.speaker;
+          else if (name(q)) q.speaker = name(q);
+        }
       } else if (sql.startsWith("UPDATE quotes SET stars")) {
         Object.assign(quotesT.get(args[3]), { stars: args[0], reactions: args[1], pinned: args[2] });
       } else if (sql.startsWith("INSERT INTO web_sessions")) {
@@ -98,7 +109,10 @@ const msg = (id, content, extra = {}) => ({
 
 test("detects the common quote formats and ignores chatter", () => {
   assert.deepEqual(detectQuote('"I\'m not lost, the LIRR is" - Ashar'), { text: "I'm not lost, the LIRR is", speaker: "Ashar", speakerId: null });
-  assert.deepEqual(detectQuote("“Never trust a deli without a cat” — <@42>"), { text: "Never trust a deli without a cat", speaker: "<@42>", speakerId: "42" });
+  assert.deepEqual(
+    detectQuote("“Never trust a deli without a cat” — <@42>", [{ id: "42", username: "ashar", global_name: "Ashar", member: { nick: "Ash" } }]),
+    { text: "Never trust a deli without a cat", speaker: "Ash", speakerId: "42" },
+  );
   assert.deepEqual(detectQuote('Sunny: "i eat around vegetables"'), { text: "i eat around vegetables", speaker: "Sunny", speakerId: null });
   assert.deepEqual(detectQuote('"just vibes"'), { text: "just vibes", speaker: null, speakerId: null });
   assert.equal(detectQuote("lol what time is it"), null);
@@ -125,6 +139,17 @@ test("messier quotes go to the AI; bots and slash commands are skipped", async (
   assert.deepEqual(failed, []);
 });
 
+test("mentions become names, in the speaker and in the text", () => {
+  const mentions = [{ id: "42", username: "ashar", global_name: "Ashar" }, { id: "7", username: "sunny" }];
+  assert.deepEqual(detectQuote('"<@7> stole my fries, <@!42>" - <@!42>', mentions), {
+    text: "@sunny stole my fries, @Ashar",
+    speaker: "Ashar",
+    speakerId: "42",
+  });
+  // Without the user in mentions, the speaker is left empty, never "<@id>".
+  assert.deepEqual(detectQuote('"hi" - <@99>'), { text: "hi", speaker: null, speakerId: "99" });
+});
+
 // --- syncing ---
 
 test("sync saves new quotes and never pins anything", async () => {
@@ -144,6 +169,26 @@ test("sync saves new quotes and never pins anything", async () => {
   assert.ok(!db.quotes.has("9"), "messages from before the last sync are left alone");
   assert.equal(db.books.get("g").last_message_id, "12");
   assert.ok(!calls.some((c) => c.method === "PUT" || c.url.includes("/pins")), "no pinning");
+});
+
+test("sync saves a mentioned speaker by name, so /quotes random from: finds them", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  mock([
+    ["/channels/q/messages?limit=100", () => [
+      msg("11", '"I am not lost" - <@123456789012345678>', {
+        mentions: [{ id: "123456789012345678", username: "ashar", global_name: "Ashar", member: { nick: "Ash" } }],
+      }),
+    ]],
+  ]);
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  const saved = db.quotes.get("11");
+  assert.deepEqual({ text: saved.text, speaker: saved.speaker, speaker_id: saved.speaker_id }, {
+    text: "I am not lost",
+    speaker: "Ash",
+    speaker_id: "123456789012345678",
+  });
+  assert.match(formatQuote(saved), /— <@123456789012345678>,/, "Discord still shows the mention");
 });
 
 test("sync retries messages the AI couldn't check once it works again", async () => {
@@ -310,6 +355,51 @@ test("the site shows a sign-in page, blocks non-members, and shows members the q
   assert.match(member.headers.get("Content-Security-Policy"), /default-src 'none'/);
   assert.doesNotMatch(page, /<script/i, "no JavaScript on the page");
   assert.doesNotMatch(page, /⭐|Most starred|hall of fame/i, "no stars anywhere");
+});
+
+test("the site never shows raw <@id> mentions, even on quotes saved before they were named", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  const row = (id, extra) => ({ message_id: id, guild_id: "123456789", channel_id: "q", posted_at: Date.now(), stars: 0, ...extra });
+  db.quotes.set("6", row("6", { text: "<@7> stole my fries", speaker: "<@42>", speaker_id: "42" }));
+  mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
+  const res = await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), { DB: db });
+  const page = await res.text();
+  assert.doesNotMatch(page, /&lt;@!?\d+&gt;|<@!?\d+>/);
+  assert.match(page, /@someone stole my fries/);
+  assert.match(page, /<strong>Unknown<\/strong>/);
+  assert.equal(db.quotes.get("6").speaker, "<@42>", "rendering a page doesn't write to the database");
+});
+
+test("sync names old <@id> speakers from the person's other quotes, and keeps the rest recoverable", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  const row = (id, extra) => ({ message_id: id, guild_id: "g", channel_id: "q", text: "words", posted_at: 1, stars: 0, ...extra });
+  db.quotes.set("5", row("5", { speaker: "Ashar", speaker_id: "42" }));
+  db.quotes.set("6", row("6", { speaker: "<@42>", speaker_id: "42" }));
+  db.quotes.set("7", row("7", { speaker: "<@!99>", speaker_id: "99" }));
+  db.quotes.set("8", row("8", { speaker: "<@42> and Jo", speaker_id: null }));
+  mock([["/channels/q/messages?limit=100", () => [msg("9", "just chatting")]]]);
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("6").speaker, "Ashar", "takes the name the same person has on another quote");
+  assert.equal(db.quotes.get("7").speaker, null, "Unknown while there's no name to use");
+  assert.equal(db.quotes.get("7").speaker_id, "99");
+  assert.equal(db.quotes.get("8").speaker, "<@42> and Jo", "a compound speaker isn't erased");
+
+  // Once user 99 is named on a new quote, the old one gets the name too.
+  db.books.get("g").last_message_id = "10";
+  mock([["/channels/q/messages?limit=100", () => [msg("11", '"hello" - <@99>', { mentions: [{ id: "99", username: "sunny" }] })]]]);
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("7").speaker, "sunny");
+});
+
+test("re-importing a message replaces its speaker and speaker_id together", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  db.quotes.set("11", { message_id: "11", guild_id: "g", channel_id: "q", text: "hi", speaker: "<@42>", speaker_id: "42", posted_at: 1, stars: 0 });
+  mock([["/channels/q/messages?limit=100", () => [msg("11", '"hi" - <@7>', { mentions: [{ id: "7", username: "sunny" }] })]]]);
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.deepEqual([db.quotes.get("11").speaker, db.quotes.get("11").speaker_id], ["sunny", "7"]);
 });
 
 test("membership is re-checked with Discord every 15 minutes, and removed members lose access", async () => {

@@ -135,7 +135,10 @@ function gatePage({ heading, message, next, signedIn, status }) {
 const formatDate = (ms, timeZone) =>
   new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone });
 
-const speakerOf = (q) => q.speaker || "Unknown";
+// A raw "<@id>" speaker is one the sync hasn't named yet.
+const speakerOf = (q) => (q.speaker && !/^<@!?\d+>$/.test(q.speaker) ? q.speaker : "Unknown");
+// Mentions the bot couldn't name when the quote was saved.
+const quoteText = (q) => q.text.replace(/<@!?\d+>/g, "@someone");
 const messageLink = (q) => `https://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
 
 /** Same quote all day, a different one tomorrow. */
@@ -148,7 +151,7 @@ export function dailyIndex(count, timeZone, date = new Date()) {
 
 function quoteCard(q, timeZone) {
   return `<article>
-<blockquote><p>“${escapeHtml(q.text)}”</p></blockquote>
+<blockquote><p>“${escapeHtml(quoteText(q))}”</p></blockquote>
 <footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at, timeZone)}</span><a href="${messageLink(q)}">Open in Discord</a></footer>
 </article>`;
 }
@@ -215,7 +218,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
 
   const hero = today
     ? `<section class="today"><p class="label">Quote of the day</p>
-<blockquote><p>“${escapeHtml(today.text)}”</p></blockquote>
+<blockquote><p>“${escapeHtml(quoteText(today))}”</p></blockquote>
 <footer>${escapeHtml(speakerOf(today))}<a href="${messageLink(today)}">Open in Discord</a></footer></section>`
     : "";
 
@@ -242,7 +245,7 @@ ${by ? `<input type="hidden" name="by" value="${escapeHtml(by)}">` : ""}${params
 <nav class="filters" aria-label="Filter and sort">
 <div class="group">${sortLink("new", "Newest")}${sortLink("shuffle", "Shuffle")}</div>
 <span class="gap"></span>
-<div class="group">${byLink(null, "Everyone")}${speakers.map((s) => byLink(s.name, `${s.name} (${s.n})`)).join("")}</div>
+<div class="group">${byLink(null, "Everyone")}${speakers.map((s) => byLink(s.name, `${speakerOf({ speaker: s.name })} (${s.n})`)).join("")}</div>
 </nav>
 ${body}
 <footer class="site">New quotes from the quotes channel appear within a few minutes.</footer>
