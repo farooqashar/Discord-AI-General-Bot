@@ -67,8 +67,11 @@ function cleanSpeaker(raw) {
   return s && s.length <= 60 && !s.includes("\n") ? s : null;
 }
 
-/** A quote by pattern, or null. Free; catches the common formats. */
-export function detectQuote(content) {
+/**
+ * A quote by pattern, or null. Free; catches the common formats.
+ * `mentions` is the message's mentioned users, used to turn <@id> into names.
+ */
+export function detectQuote(content, mentions = []) {
   const text = (content ?? "").trim();
   if (text.length < 4) return null;
   let m = text.match(QUOTE_FIRST);
@@ -76,16 +79,46 @@ export function detectQuote(content) {
     const rest = (m[2] ?? "").trim();
     // Lots of text after the closing quote means it isn't just an attribution.
     if (rest && !cleanSpeaker(rest)) return null;
-    return withMention({ text: m[1].trim(), speaker: cleanSpeaker(rest) });
+    return withMention({ text: m[1].trim(), speaker: cleanSpeaker(rest) }, mentions);
   }
   m = text.match(SPEAKER_FIRST);
-  if (m) return withMention({ text: m[2].trim(), speaker: cleanSpeaker(m[1]) });
+  if (m) return withMention({ text: m[2].trim(), speaker: cleanSpeaker(m[1]) }, mentions);
   return null;
 }
 
-function withMention(q) {
+const mentionName = (u) => u.member?.nick ?? u.global_name ?? u.username ?? null;
+
+/**
+ * Store names, not raw <@id> mentions: the speaker becomes the person's display
+ * name (their ID stays in speakerId for pings), and mentions in the text become
+ * @Name. A mention we can't name leaves the speaker empty rather than "<@id>".
+ */
+function withMention(q, mentions = []) {
+  const names = new Map((mentions ?? []).map((u) => [u.id, mentionName(u)]));
   const mention = q.speaker?.match(/^<@!?(\d+)>$/);
-  return { ...q, speakerId: mention ? mention[1] : null };
+  const speakerId = mention ? mention[1] : null;
+  return {
+    text: q.text.replace(/<@!?(\d+)>/g, (raw, id) => (names.get(id) ? `@${names.get(id)}` : raw)),
+    speaker: speakerId ? names.get(speakerId) ?? null : q.speaker,
+    speakerId,
+  };
+}
+
+/**
+ * Older quotes were saved with "<@id>" as the speaker. Give them the name the
+ * same person has on another quote, or leave them as Unknown.
+ */
+export async function fixMentionSpeakers(env, guildId) {
+  await env.DB.prepare(
+    `UPDATE quotes SET speaker = (
+       SELECT q2.speaker FROM quotes q2
+       WHERE q2.guild_id = quotes.guild_id AND q2.speaker_id = quotes.speaker_id
+         AND q2.speaker IS NOT NULL AND q2.speaker NOT LIKE '<@%'
+       ORDER BY q2.posted_at DESC LIMIT 1)
+     WHERE guild_id = ? AND speaker LIKE '<@%'`,
+  )
+    .bind(guildId)
+    .run();
 }
 
 const QUOTE_SCHEMA = {
@@ -122,7 +155,7 @@ async function aiQuotes(env, messages) {
   });
   return quotes
     .filter((q) => Number.isInteger(q.index) && messages[q.index] && q.text?.trim())
-    .map((q) => ({ message: messages[q.index], quote: withMention({ text: q.text.trim(), speaker: cleanSpeaker(q.speaker) }) }));
+    .map((q) => ({ message: messages[q.index], quote: withMention({ text: q.text.trim(), speaker: cleanSpeaker(q.speaker) }, messages[q.index].mentions) }));
 }
 
 const starCount = (m) => (m.reactions ?? []).find((r) => r.emoji?.name === "⭐")?.count ?? 0;
@@ -134,7 +167,7 @@ export async function extractQuotes(env, messages) {
   const found = [];
   const leftovers = [];
   for (const m of candidates) {
-    const quote = detectQuote(m.content);
+    const quote = detectQuote(m.content, m.mentions);
     if (quote) found.push({ message: m, quote });
     else if (m.content.trim().length <= 500) leftovers.push(m);
   }
@@ -173,6 +206,15 @@ async function saveQuotes(env, guildId, channelId, found) {
         m.pinned ? 1 : 0,
       )
       .run();
+    // Re-imports (/quotes setup) repair quotes saved before mentions were named.
+    if (quote.speakerId || /<@!?\d+>/.test(m.content)) {
+      await env.DB.prepare(
+        `UPDATE quotes SET text = ?, speaker = ?
+         WHERE message_id = ? AND (speaker LIKE '<@%' OR text LIKE '%<@%')`,
+      )
+        .bind(quote.text.slice(0, 1000), quote.speaker, m.id)
+        .run();
+    }
   }
 }
 
@@ -288,6 +330,7 @@ export async function quotes(interaction, env) {
     const history = await fetchHistory(env, channelId, BACKFILL_MESSAGES);
     const found = await extractQuotes(env, history);
     await saveQuotes(env, guildId, channelId, found);
+    await fixMentionSpeakers(env, guildId);
     await env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(history.length ? newestId(history) : null, guildId).run();
 
     await reply(

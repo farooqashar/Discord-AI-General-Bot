@@ -1,6 +1,6 @@
 // The Quote Book website. Server-rendered HTML, no JavaScript, members only.
 
-import { ensureQuoteTables } from "../commands/quotes.js";
+import { ensureQuoteTables, fixMentionSpeakers } from "../commands/quotes.js";
 import { currentSession, finishLogin, logout, startLogin } from "./auth.js";
 
 const PAGE_SIZE = 120;
@@ -138,6 +138,8 @@ const formatDate = (ms) =>
   new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York" });
 
 const speakerOf = (q) => q.speaker || "Unknown";
+// Mentions the bot couldn't name when the quote was saved.
+const quoteText = (q) => q.text.replace(/<@!?\d+>/g, "@someone");
 const messageLink = (q) => `https://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
 
 /** Same quote all day, a different one tomorrow. */
@@ -151,7 +153,7 @@ function dailyIndex(count, date = new Date()) {
 function quoteCard(q) {
   const stars = q.stars ? `<span class="stars" title="${q.stars >= 3 ? "Hall of fame" : "Stars"}">⭐ ${q.stars}</span>` : "";
   return `<article class="${q.stars >= 3 ? "hof" : ""}">
-<blockquote><p>“${escapeHtml(q.text)}”</p></blockquote>
+<blockquote><p>“${escapeHtml(quoteText(q))}”</p></blockquote>
 <footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at)}</span>${stars}<a href="${messageLink(q)}">Open in Discord</a></footer>
 </article>`;
 }
@@ -171,6 +173,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
   const by = (searchParams.get("by") ?? "").trim().slice(0, 60);
   const sort = ["new", "top", "shuffle"].includes(searchParams.get("sort")) ? searchParams.get("sort") : "new";
   const params = { q, by, sort: sort === "new" ? "" : sort };
+  await fixMentionSpeakers(env, book.guild_id);
 
   const { results: totals } = await env.DB.prepare("SELECT COUNT(*) AS n FROM quotes WHERE guild_id = ?").bind(book.guild_id).all();
   const total = totals[0]?.n ?? 0;
@@ -217,7 +220,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
 
   const hero = today
     ? `<section class="today"><p class="label">Quote of the day</p>
-<blockquote><p>“${escapeHtml(today.text)}”</p></blockquote>
+<blockquote><p>“${escapeHtml(quoteText(today))}”</p></blockquote>
 <footer>${escapeHtml(speakerOf(today))}<a href="${messageLink(today)}">Open in Discord</a></footer></section>`
     : "";
 
