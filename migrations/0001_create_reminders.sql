@@ -1,3 +1,5 @@
+-- Pending /remind reminders. The bot also creates this table on first use, so
+-- applying this is optional.
 CREATE TABLE IF NOT EXISTS reminders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_id TEXT NOT NULL,

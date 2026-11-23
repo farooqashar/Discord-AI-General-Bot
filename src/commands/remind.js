@@ -29,6 +29,20 @@ const SCHEMA = {
 
 const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
 
+export async function ensureRemindersTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS reminders (
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       channel_id TEXT NOT NULL,
+       user_id TEXT NOT NULL,
+       message TEXT NOT NULL,
+       due_at INTEGER NOT NULL,
+       created_at INTEGER NOT NULL DEFAULT (unixepoch())
+     )`,
+  ).run();
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_reminders_due_at ON reminders (due_at)").run();
+}
+
 export async function remind(interaction, env) {
   const request = getOption(interaction, "reminder");
   const timeZone = env.TIMEZONE || "America/New_York";
@@ -61,6 +75,7 @@ If only a day is given with no time, use 9:00 AM.`,
 
   const user = invokingUser(interaction);
   const message = parsed.message.slice(0, 500);
+  await ensureRemindersTable(env);
   await env.DB.prepare(
     "INSERT INTO reminders (channel_id, user_id, message, due_at) VALUES (?, ?, ?, ?)",
   )
@@ -85,6 +100,7 @@ const GIVE_UP_AFTER = 60 * 60;
  * queue instead of filling every run's batch of 25.
  */
 export async function postDueReminders(env) {
+  await ensureRemindersTable(env);
   const now = Math.floor(Date.now() / 1000);
   const { results } = await env.DB.prepare(
     "SELECT id, channel_id, user_id, message, due_at, created_at FROM reminders WHERE due_at <= ? ORDER BY id LIMIT 25",

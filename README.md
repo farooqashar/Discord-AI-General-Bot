@@ -41,12 +41,12 @@ src/
   commands/              One file per command
   web/                   Quote Book website and Sign in with Discord
 scripts/register-commands.js   Registers the commands with Discord
-migrations/                    D1 table for reminders
+migrations/                    D1 tables (the bot also creates them on first use)
 ```
 
 ## Setup
 
-Everything is done in the Cloudflare and Discord dashboards; no terminal needed. You need a Cloudflare account and an Anthropic API key. The reminders database (`discord-bot-reminders`) already exists and is set in `wrangler.toml`.
+Everything is done in the GitHub, Cloudflare and Discord dashboards; no terminal needed. You need a GitHub account, a Cloudflare account and an Anthropic API key. Fork this repo first: you'll edit `wrangler.toml` in your fork, because the IDs in it belong to the original author's Cloudflare account and Discord app.
 
 ### 1. Create the Discord app
 
@@ -61,13 +61,26 @@ Everything is done in the Cloudflare and Discord dashboards; no terminal needed.
 
    That grants View Channels, Send Messages, Read Message History, Create Public Threads, Send Messages in Threads, Create/Manage Events, and Pin Messages (for `/auto-pin`). Re-opening the link on a server the bot is already in just updates its permissions.
 
-### 2. Deploy on Cloudflare
+### 2. Create the database
 
-1. In the Cloudflare dashboard, go to **Workers & Pages → Create → Import a repository** and pick this repo. Keep the default build settings and deploy. It redeploys on every push to `main`, and sets up the every-minute reminder check.
+The bot stores reminders, the last registered command list and its other settings in a Cloudflare D1 database.
+
+1. In the Cloudflare dashboard, go to **Storage & Databases → D1 → Create** and name it `discord-bot-reminders`. (From a terminal: `npx wrangler d1 create discord-bot-reminders`.)
+2. Copy its **Database ID**.
+3. In your fork, edit `wrangler.toml` (the pencil icon on GitHub works):
+   - under `[[d1_databases]]`, set `database_id` to the ID you copied;
+   - set `DISCORD_APP_ID` to your Application ID from step 1;
+   - set `PUBLIC_URL` to your Worker's URL (`https://discord-ai-general-bot.<your workers subdomain>.workers.dev`; you can fix it after step 3 if you're not sure).
+
+The bot creates its tables the first time it needs them, so you don't have to run the migrations. If you'd rather create them up front, run `npm run db:migrate`, or paste the files in `migrations/` into the database's **Console** tab in order.
+
+### 3. Deploy on Cloudflare
+
+1. In the Cloudflare dashboard, go to **Workers & Pages → Create → Import a repository** and pick your fork. Keep the default build settings and deploy. It redeploys on every push to `main`, and sets up the every-minute reminder check.
 2. Open the Worker → **Settings → Variables and Secrets** and add three **Secrets**: `DISCORD_PUBLIC_KEY`, `DISCORD_TOKEN`, `ANTHROPIC_API_KEY`.
 3. Copy the Worker's URL from its overview page (for example `https://discord-ai-general-bot.<you>.workers.dev`).
 
-### 3. Connect Discord to the Worker
+### 4. Connect Discord to the Worker
 
 Back on the app's **General Information** page in Discord, paste the Worker URL into **Interactions Endpoint URL** and save. Discord pings the URL to check it, and the bot uses that ping to register its slash commands. They can take a minute to appear; if they don't show up, restart Discord.
 
@@ -109,7 +122,7 @@ To keep the bot in a single channel, go to Server Settings → Integrations → 
 - **Anthropic:** pay as you go. `/research` and `/food` also pay a per-search fee (1¢ each), capped at 4 and 3 searches per run. Set a monthly spend limit in the Anthropic Console.
 - **Research time:** background work on Workers gets about 30 seconds after the "thinking…" reply. A capped research run normally fits; if very long questions get cut off, move `/research` to a Cloudflare Workflow.
 - **Message length:** Discord messages max out at 2,000 characters, so long answers are split across several messages.
-- This bot only responds to slash commands. Replying to @mentions or watching every message would need an always-on bot connected to Discord's gateway.
+- **@mentions:** the bot doesn't stay connected to Discord, so it answers @mentions only in channels turned on with `/listen`, and up to about a minute late (see [@mentions](#mentions)).
 
 ## Tests
 
