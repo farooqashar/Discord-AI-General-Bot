@@ -68,28 +68,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * Call the Discord REST API. Uses the bot token unless `auth: false`
  * (interaction webhooks are authorized by their token in the URL).
+ * With `timeoutMs`, the whole call, rate-limit waits included, gives up after
+ * that long. Failures carry Discord's HTTP `status` and JSON error `code`.
  */
-export async function discordApi(env, path, { method = "GET", body, auth = true } = {}) {
+export async function discordApi(env, path, { method = "GET", body, auth = true, timeoutMs } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (auth) headers.Authorization = `Bot ${env.DISCORD_TOKEN}`;
+  const signal = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
+  const deadline = timeoutMs ? Date.now() + timeoutMs : Infinity;
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`${API}${path}`, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
 
     if (res.status === 429) {
       // Rate limited: wait as long as Discord asks, then try again.
       const data = await res.json().catch(() => ({}));
-      await sleep(Math.ceil((data.retry_after ?? 1) * 1000));
+      const wait = Math.ceil((data.retry_after ?? 1) * 1000);
+      if (attempt === 2 || Date.now() + wait >= deadline) break;
+      await sleep(wait);
       continue;
     }
     if (!res.ok) {
       const text = await res.text();
       const err = new Error(`Discord ${method} ${path.split("?")[0]} failed (${res.status}): ${text.slice(0, 300)}`);
       err.status = res.status;
+      try {
+        err.code = JSON.parse(text).code;
+      } catch {}
       throw err;
     }
     return res.status === 204 ? null : res.json();
