@@ -53,9 +53,13 @@ function fakeDb() {
         const [token, user_id, username, guild_ids, expires_at] = args;
         sessions.set(token, { token, user_id, username, guild_ids, expires_at });
       } else if (sql.startsWith("UPDATE web_sessions SET guild_ids")) {
-        sessions.get(args[1]).guild_ids = args[0];
+        const session = sessions.get(args[0]);
+        session.guild_ids = JSON.stringify(JSON.parse(session.guild_ids).filter((id) => id !== args[1]));
       } else if (sql.startsWith("INSERT OR REPLACE INTO web_session_checks")) {
-        checks.set(`${args[0]}/${args[1]}`, { verified_at: args[2] });
+        checks.set(`${args[0]}/${args[1]}`, { verified_at: args[2], failed_at: null });
+      } else if (sql.startsWith("INSERT INTO web_session_checks")) {
+        const key = `${args[0]}/${args[1]}`;
+        checks.set(key, { verified_at: 0, ...checks.get(key), failed_at: args[2] });
       } else if (sql.startsWith("DELETE FROM web_session_checks WHERE token = ? AND")) {
         checks.delete(`${args[0]}/${args[1]}`);
       } else if (sql.startsWith("DELETE FROM web_session_checks WHERE token = ?")) {
@@ -361,6 +365,48 @@ test("a failed membership re-check denies access and is logged", async () => {
   }
   assert.match(logged.join("\n"), /membership re-check failed.*500/);
   assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["123456789"], "an outage doesn't sign anyone out of a server");
+
+  // Reloading within the minute doesn't ask Discord again; after it, Discord is asked and a member gets in.
+  let calls = mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
+  console.error = () => {};
+  try {
+    assert.equal((await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db })).status, 503);
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(calls.length, 0);
+  db.checks.get(`${"a".repeat(64)}/123456789`).failed_at = Date.now() - 61000;
+  assert.equal((await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db })).status, 200);
+  assert.equal(calls.length, 1);
+});
+
+test("a 404 that isn't Unknown Member, or a long rate limit, denies access without dropping the server", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "I'm not lost, the LIRR is", speaker: "Ashar", posted_at: Date.now(), stars: 0 });
+  const req = signedIn(db, ["123456789"]);
+  const key = `${"a".repeat(64)}/123456789`;
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    // The bot lost access to the server: Discord says Unknown Guild, which says nothing about the visitor.
+    mock([["/guilds/123456789/members/u1", () => Response.json({ message: "Unknown Guild", code: 10004 }, { status: 404 })]]);
+    const res = await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db });
+    assert.equal(res.status, 503);
+    assert.doesNotMatch(await res.text(), /LIRR/);
+    assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["123456789"]);
+
+    // Rate limited for a minute: give up at once instead of keeping the visitor waiting.
+    db.checks.delete(key);
+    const calls = mock([["/guilds/123456789/members/u1", () => Response.json({ retry_after: 60 }, { status: 429 })]]);
+    const started = Date.now();
+    assert.equal((await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db })).status, 503);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(calls.length, 1);
+  } finally {
+    console.error = realError;
+  }
+  assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["123456789"]);
 });
 
 test("everything shown on the page is escaped", async () => {
@@ -379,6 +425,7 @@ test("the site dates quotes and rolls the quote of the day over in TIMEZONE", as
   db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
   // 10:30pm Nov 21 in Los Angeles is Nov 22 in New York and UTC.
   db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "late one", speaker: "Jo", posted_at: Date.UTC(2026, 10, 22, 6, 30), stars: 0 });
+  mock([]);
   const render = async (env) => (await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), env)).text();
   assert.match(await render({ DB: db, TIMEZONE: "America/Los_Angeles" }), /<span>Nov 21, 2026<\/span>/);
   assert.match(await render({ DB: db }), /<span>Nov 22, 2026<\/span>/);
