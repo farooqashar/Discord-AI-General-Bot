@@ -128,7 +128,10 @@ async function aiQuotes(env, messages) {
 const starCount = (m) => (m.reactions ?? []).find((r) => r.emoji?.name === "⭐")?.count ?? 0;
 const reactionCount = (m) => (m.reactions ?? []).reduce((s, r) => s + (r.count ?? 0), 0);
 
-/** Find the quotes among some messages: patterns first, the AI for the rest. */
+/**
+ * Find the quotes among some messages: patterns first, the AI for the rest.
+ * `failed` lists the messages whose AI check failed, so a later sync can retry them.
+ */
 export async function extractQuotes(env, messages) {
   const candidates = messages.filter((m) => !m.author?.bot && m.content?.trim() && !m.content.trim().startsWith("/"));
   const found = [];
@@ -140,15 +143,17 @@ export async function extractQuotes(env, messages) {
   }
   const batches = [];
   for (let i = 0; i < leftovers.length; i += AI_BATCH) batches.push(leftovers.slice(i, i + AI_BATCH));
+  const failed = [];
   const results = await Promise.all(
     batches.map((b) =>
       aiQuotes(env, b).catch((err) => {
         console.warn("Quote AI check failed; keeping pattern matches only:", err.message);
+        failed.push(...b);
         return [];
       }),
     ),
   );
-  return [...found, ...results.flat()];
+  return { found: [...found, ...results.flat()], failed };
 }
 
 async function saveQuotes(env, guildId, channelId, found) {
@@ -177,6 +182,7 @@ async function saveQuotes(env, guildId, channelId, found) {
 }
 
 const newestId = (messages) => messages.reduce((max, m) => (BigInt(m.id) > BigInt(max) ? m.id : max), "0");
+const oldestId = (messages) => messages.reduce((min, m) => (BigInt(m.id) < BigInt(min) ? m.id : min), messages[0].id);
 
 /** Read a quotes channel's newest messages, save new quotes, refresh stars, pin the best. */
 export async function syncQuoteBook(env, book) {
@@ -184,12 +190,23 @@ export async function syncQuoteBook(env, book) {
   if (!recent.length) return { added: 0, pinned: 0 };
 
   // Claim before the slow part so overlapping runs don't redo it.
-  const last = book.last_message_id ?? "0";
-  await env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(newestId(recent), book.guild_id).run();
+  const before = book.last_message_id ?? null;
+  const last = before ?? "0";
+  const setCursor = (id) => env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(id, book.guild_id).run();
+  await setCursor(newestId(recent));
 
   const fresh = recent.filter((m) => BigInt(m.id) > BigInt(last));
-  const found = await extractQuotes(env, fresh);
-  await saveQuotes(env, book.guild_id, book.channel_id, found);
+  let found;
+  try {
+    let failed;
+    ({ found, failed } = await extractQuotes(env, fresh));
+    await saveQuotes(env, book.guild_id, book.channel_id, found);
+    // Hand messages the AI couldn't check back to the next run. Saving is idempotent, so redoing later ones is harmless.
+    if (failed.length) await setCursor(String(BigInt(oldestId(failed)) - 1n));
+  } catch (err) {
+    await setCursor(before).catch(() => {});
+    throw err;
+  }
 
   // Refresh reactions on recent quotes, and pin new hall-of-famers.
   let pinned = 0;
@@ -287,7 +304,7 @@ export async function quotes(interaction, env) {
 
     // Import recent history now, then keep up every 5 minutes.
     const history = await fetchHistory(env, channelId, BACKFILL_MESSAGES);
-    const found = await extractQuotes(env, history);
+    const { found } = await extractQuotes(env, history);
     await saveQuotes(env, guildId, channelId, found);
     await env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(history.length ? newestId(history) : null, guildId).run();
 

@@ -96,7 +96,7 @@ test("messier quotes go to the AI; bots and slash commands are skipped", async (
     prompt = JSON.parse(init.body).messages[0].content;
     return { content: [{ type: "tool_use", name: "save_quotes", input: { quotes: [{ index: 0, text: "i only eat beige food", speaker: "Jo" }] } }] };
   }]]);
-  const found = await extractQuotes({}, [
+  const { found, failed } = await extractQuotes({}, [
     msg("1", '"clean one" - Ashar'),
     msg("2", "jo at dinner tonight: i only eat beige food"),
     msg("3", "bot stuff", { author: { id: "b", bot: true } }),
@@ -107,6 +107,7 @@ test("messier quotes go to the AI; bots and slash commands are skipped", async (
     ["1", "clean one", "Ashar"],
     ["2", "i only eat beige food", "Jo"],
   ]);
+  assert.deepEqual(failed, []);
 });
 
 // --- syncing ---
@@ -131,6 +132,48 @@ test("sync saves new quotes, refreshes stars, and pins at 3 ⭐", async () => {
   assert.deepEqual({ stars: db.quotes.get("9").stars, pinned: db.quotes.get("9").pinned }, { stars: 3, pinned: 1 });
   assert.ok(calls.some((c) => c.method === "PUT" && c.url.endsWith("/channels/q/messages/pins/9")));
   assert.ok(!calls.some((c) => c.method === "PUT" && c.url.endsWith("/pins/12")), "new quote without stars isn't pinned");
+});
+
+test("sync retries messages the AI couldn't check once it works again", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  let aiDown = true;
+  let aiPrompt;
+  mock([
+    ["/channels/q/messages?limit=100", () => [
+      msg("13", '"clean one" - Sunny'),
+      msg("12", "Jo said she only eats beige food"),
+      msg("11", "just chatting"),
+    ]],
+    ["anthropic", (_u, init) => {
+      if (aiDown) return new Response("overloaded", { status: 500 });
+      aiPrompt = JSON.parse(init.body).messages[0].content;
+      const index = aiPrompt.split("\n").findIndex((line) => line.includes("beige food"));
+      return { content: [{ type: "tool_use", name: "save_quotes", input: { quotes: [{ index, text: "she only eats beige food", speaker: "Jo" }] } }] };
+    }],
+  ]);
+
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("13").text, "clean one", "pattern matches are saved right away");
+  assert.ok(!db.quotes.has("12"));
+  assert.equal(db.books.get("g").last_message_id, "10", "the cursor stops before the messages the AI missed");
+
+  aiDown = false;
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("12").text, "she only eats beige food");
+  assert.equal(db.quotes.size, 2);
+  assert.equal(db.books.get("g").last_message_id, "13");
+  assert.doesNotMatch(aiPrompt, /clean one/);
+});
+
+test("sync hands the messages back if saving fails", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  mock([["/channels/q/messages?limit=100", () => [msg("12", '"brand new" - Sunny')]]]);
+  const prepare = db.prepare;
+  db.prepare = (sql) => (sql.startsWith("INSERT OR IGNORE INTO quotes") ? assert.fail("D1 is down") : prepare(sql));
+  await assert.rejects(syncQuoteBook({ DB: db }, db.books.get("g")), /D1 is down/);
+  assert.equal(db.books.get("g").last_message_id, "10");
 });
 
 test("/quotes setup needs a public channel and imports history", async () => {
