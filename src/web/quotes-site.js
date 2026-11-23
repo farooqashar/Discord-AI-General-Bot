@@ -1,7 +1,7 @@
 // The Quote Book website. Server-rendered HTML, no JavaScript, members only.
 
 import { ensureQuoteTables } from "../commands/quotes.js";
-import { currentSession, finishLogin, logout, startLogin } from "./auth.js";
+import { currentSession, finishLogin, logout, startLogin, stillMember } from "./auth.js";
 
 const PAGE_SIZE = 120;
 
@@ -121,7 +121,7 @@ function page(title, body) {
 </html>`;
 }
 
-function gatePage({ heading, message, next, signedIn }) {
+function gatePage({ heading, message, next, signedIn, status }) {
   const action = signedIn
     ? `<a class="button" href="/auth/logout">Sign out</a>`
     : `<a class="button" href="/auth/login?next=${encodeURIComponent(next)}">Sign in with Discord</a>`;
@@ -130,7 +130,7 @@ function gatePage({ heading, message, next, signedIn }) {
       "Quote Book",
       `<main class="gate"><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(message)}</p><div>${action}</div></main>`,
     ),
-    signedIn ? 403 : 200,
+    status ?? (signedIn ? 403 : 200),
   );
 }
 
@@ -287,7 +287,16 @@ export async function handleWeb(request, env) {
   const book = await env.DB.prepare("SELECT * FROM quote_books WHERE guild_id = ?").bind(guildId).first();
   const hasAny = await env.DB.prepare("SELECT 1 FROM quotes WHERE guild_id = ? LIMIT 1").bind(guildId).first();
   if (!book && !hasAny) return gatePage({ heading: "Not found.", message: "That server doesn't have a Quote Book.", signedIn: true });
-  if (!session.guildIds.includes(guildId)) {
+  const member = await stillMember(env, session, guildId);
+  if (member === null) {
+    return gatePage({
+      heading: "Try again in a minute.",
+      message: "Discord didn't answer when we checked that you're still in this server.",
+      signedIn: true,
+      status: 503,
+    });
+  }
+  if (!member) {
     return gatePage({
       heading: "Members only.",
       message: `This Quote Book is for members of ${book?.guild_name || "that server"}. If you just joined, sign out and back in.`,

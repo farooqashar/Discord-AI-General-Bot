@@ -79,7 +79,7 @@ Discord only sends ordinary messages to bots that stay connected all the time, w
 
 ## Quote Book website
 
-`/quotes site` links to `<worker url>/quotes/<server id>`. Visitors click **Sign in with Discord**; Discord tells the Worker who they are and which servers they're in (scopes `identify guilds`), and only members of that server see its quotes. Nobody else, including people who sign in but aren't in the server, sees anything. Sign-ins last 7 days; the Worker keeps only the user's ID, name and server list, never Discord's access token. The page has no JavaScript and escapes all quote text.
+`/quotes site` links to `<worker url>/quotes/<server id>`. Visitors click **Sign in with Discord**; Discord tells the Worker who they are and which servers they're in (scopes `identify guilds`), and only members of that server see its quotes. Nobody else, including people who sign in but aren't in the server, sees anything. Sign-ins last 7 days, but the server list from sign-in isn't trusted for that long: at most every 15 minutes, before showing a server's quotes, the Worker asks Discord (with the bot token) whether the visitor is still a member. Someone who leaves or is kicked or banned loses access within 15 minutes, without being signed out; current members never have to sign in again. If Discord doesn't answer that check, the page asks them to try again in a minute rather than showing the quotes, and the error goes to the Cloudflare logs. The Worker keeps only the user's ID, name and server list, never Discord's access token. The page has no JavaScript and escapes all quote text.
 
 One-time setup:
 

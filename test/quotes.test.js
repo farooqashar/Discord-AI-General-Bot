@@ -33,9 +33,10 @@ function fakeDb() {
   const books = new Map();
   const quotesT = new Map();
   const sessions = new Map();
+  const checks = new Map();
   const stmt = (sql, args = []) => ({
     async run() {
-      if (sql.startsWith("CREATE") || sql.startsWith("DELETE FROM web_sessions WHERE expires_at")) return {};
+      if (sql.startsWith("CREATE") || sql.startsWith("DELETE FROM web_sessions WHERE expires_at") || sql.includes("NOT IN")) return {};
       if (sql.startsWith("INSERT INTO quote_books")) {
         const [guild_id, guild_name, channel_id, last_message_id] = args;
         books.set(guild_id, { guild_id, guild_name, channel_id, last_message_id });
@@ -51,7 +52,16 @@ function fakeDb() {
       } else if (sql.startsWith("INSERT INTO web_sessions")) {
         const [token, user_id, username, guild_ids, expires_at] = args;
         sessions.set(token, { token, user_id, username, guild_ids, expires_at });
-      } else if (sql.startsWith("DELETE FROM quote_books")) books.delete(args[0]);
+      } else if (sql.startsWith("UPDATE web_sessions SET guild_ids")) {
+        sessions.get(args[1]).guild_ids = args[0];
+      } else if (sql.startsWith("INSERT OR REPLACE INTO web_session_checks")) {
+        checks.set(`${args[0]}/${args[1]}`, { verified_at: args[2] });
+      } else if (sql.startsWith("DELETE FROM web_session_checks WHERE token = ? AND")) {
+        checks.delete(`${args[0]}/${args[1]}`);
+      } else if (sql.startsWith("DELETE FROM web_session_checks WHERE token = ?")) {
+        for (const key of checks.keys()) if (key.startsWith(`${args[0]}/`)) checks.delete(key);
+      } else if (sql.startsWith("DELETE FROM web_sessions WHERE token")) sessions.delete(args[0]);
+      else if (sql.startsWith("DELETE FROM quote_books")) books.delete(args[0]);
       return { meta: { changes: 1 } };
     },
     async all() {
@@ -62,13 +72,14 @@ function fakeDb() {
       return { results: [...quotesT.values()].filter((q) => q.guild_id === args[0]) };
     },
     async first() {
+      if (sql.includes("FROM web_session_checks")) return checks.get(`${args[0]}/${args[1]}`) ?? null;
       if (sql.includes("FROM web_sessions")) return sessions.get(args[0]) ?? null;
       if (sql.includes("FROM quote_books")) return books.get(args[0]) ?? null;
       const rows = [...quotesT.values()].filter((q) => q.guild_id === args[0]);
       return rows[0] ?? null;
     },
   });
-  return { books, quotes: quotesT, sessions, prepare: (sql) => ({ ...stmt(sql), bind: (...args) => stmt(sql, args) }) };
+  return { books, quotes: quotesT, sessions, checks, prepare: (sql) => ({ ...stmt(sql), bind: (...args) => stmt(sql, args) }) };
 }
 
 const msg = (id, content, extra = {}) => ({
@@ -238,6 +249,7 @@ test("the site shows a sign-in page, blocks non-members, and shows members the q
   assert.equal(outsider.status, 403);
   assert.doesNotMatch(await outsider.text(), /LIRR/);
 
+  mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
   const member = await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), { DB: db });
   assert.equal(member.status, 200);
   const page = await member.text();
@@ -247,11 +259,65 @@ test("the site shows a sign-in page, blocks non-members, and shows members the q
   assert.doesNotMatch(page, /<script/i, "no JavaScript on the page");
 });
 
+test("membership is re-checked with Discord every 15 minutes, and removed members lose access", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "I'm not lost, the LIRR is", speaker: "Ashar", posted_at: Date.now(), stars: 0 });
+  const req = signedIn(db, ["123456789", "987654321"]);
+  const view = () => handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db, DISCORD_TOKEN: "bot" });
+  const key = `${"a".repeat(64)}/123456789`;
+
+  // A current member: Discord is asked once, then trusted for 15 minutes without signing in again.
+  let calls = mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
+  assert.equal((await view()).status, 200);
+  assert.equal((await view()).status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].headers.Authorization, "Bot bot");
+
+  // Kicked or banned: still allowed inside the window, denied once it's stale.
+  calls = mock([["/guilds/123456789/members/u1", () => Response.json({ message: "Unknown Member", code: 10007 }, { status: 404 })]]);
+  assert.equal((await view()).status, 200);
+  assert.equal(calls.length, 0);
+  db.checks.get(key).verified_at = Date.now() - 16 * 60000;
+  const removed = await view();
+  assert.equal(removed.status, 403);
+  const html = await removed.text();
+  assert.match(html, /Members only/);
+  assert.doesNotMatch(html, /LIRR/);
+  assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["987654321"], "the server is dropped from the session");
+  assert.equal(db.checks.has(key), false);
+  calls = mock([]);
+  assert.equal((await view()).status, 403);
+  assert.equal(calls.length, 0, "no need to ask Discord again");
+});
+
+test("a failed membership re-check denies access and is logged", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "I'm not lost, the LIRR is", speaker: "Ashar", posted_at: Date.now(), stars: 0 });
+  const req = signedIn(db, ["123456789"]);
+  db.checks.set(`${"a".repeat(64)}/123456789`, { verified_at: Date.now() - 20 * 60000 });
+  mock([["/guilds/123456789/members/u1", () => new Response("oops", { status: 500 })]]);
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => logged.push(args.join(" "));
+  try {
+    const res = await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db });
+    assert.equal(res.status, 503);
+    assert.doesNotMatch(await res.text(), /LIRR/);
+  } finally {
+    console.error = realError;
+  }
+  assert.match(logged.join("\n"), /membership re-check failed.*500/);
+  assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["123456789"], "an outage doesn't sign anyone out of a server");
+});
+
 test("everything shown on the page is escaped", async () => {
   assert.equal(escapeHtml(`<img src=x onerror="alert(1)">'&`), "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&#39;&amp;");
   const db = fakeDb();
   db.books.set("123456789", { guild_id: "123456789", guild_name: "<b>srv</b>", channel_id: "q" });
   db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "<script>alert(1)</script>", speaker: '"><img src=x>', posted_at: Date.now(), stars: 0 });
+  mock([]);
   const res = await handleWeb(new Request('https://bot.example/quotes/123456789?q="><script>', signedIn(db, ["123456789"])), { DB: db });
   const page = await res.text();
   assert.doesNotMatch(page, /<script|<img src=x|<b>srv/);

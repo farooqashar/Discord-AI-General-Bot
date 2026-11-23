@@ -4,12 +4,17 @@
 // one-time code, which we swap for their identity and server list. We keep
 // only their user ID, name and the IDs of servers they're in, in a session
 // row keyed by a random cookie, for SESSION_DAYS. We never see their password,
-// and we don't keep Discord's access token.
+// and we don't keep Discord's access token. That server list is only a
+// snapshot, so stillMember() asks Discord again (with the bot token) every
+// RECHECK_MINUTES before showing a server's Quote Book.
+
+import { discordApi } from "../discord.js";
 
 const API = "https://discord.com/api/v10";
 export const SESSION_COOKIE = "qb_session";
 const STATE_COOKIE = "qb_state";
 const SESSION_DAYS = 7;
+const RECHECK_MINUTES = 15;
 
 export async function ensureSessionTable(env) {
   await env.DB.prepare(
@@ -19,6 +24,15 @@ export async function ensureSessionTable(env) {
        username TEXT,
        guild_ids TEXT NOT NULL,
        expires_at INTEGER NOT NULL
+     )`,
+  ).run();
+  // When each session was last confirmed, by Discord, to still be in each server.
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS web_session_checks (
+       token TEXT NOT NULL,
+       guild_id TEXT NOT NULL,
+       verified_at INTEGER NOT NULL,
+       PRIMARY KEY (token, guild_id)
      )`,
   ).run();
 }
@@ -113,6 +127,7 @@ export async function finishLogin(request, env) {
     .run();
   // Tidy up expired sessions now and then.
   await env.DB.prepare("DELETE FROM web_sessions WHERE expires_at < ?").bind(Date.now()).run();
+  await env.DB.prepare("DELETE FROM web_session_checks WHERE token NOT IN (SELECT token FROM web_sessions)").run();
 
   const next = safeNext(decodeURIComponent(state.split(".").slice(1).join(".")));
   const headers = new Headers({ Location: next });
@@ -131,12 +146,44 @@ export async function currentSession(request, env) {
   return { ...row, guildIds: JSON.parse(row.guild_ids) };
 }
 
+/**
+ * Is the signed-in visitor still in this server? Trusts a check younger than
+ * RECHECK_MINUTES, otherwise asks Discord. Returns true or false, or null when
+ * Discord couldn't be reached (callers should deny, not fall back).
+ * Someone who has left, or was kicked or banned, loses the server from their session.
+ */
+export async function stillMember(env, session, guildId) {
+  if (!session.guildIds.includes(guildId)) return false;
+  const check = await env.DB.prepare("SELECT verified_at FROM web_session_checks WHERE token = ? AND guild_id = ?")
+    .bind(session.token, guildId)
+    .first();
+  if (check && Date.now() - check.verified_at < RECHECK_MINUTES * 60000) return true;
+
+  try {
+    await discordApi(env, `/guilds/${guildId}/members/${session.user_id}`);
+  } catch (err) {
+    if (err.status !== 404) {
+      console.error("Quote Book membership re-check failed:", err.message);
+      return null;
+    }
+    session.guildIds = session.guildIds.filter((id) => id !== guildId);
+    await env.DB.prepare("UPDATE web_sessions SET guild_ids = ? WHERE token = ?").bind(JSON.stringify(session.guildIds), session.token).run();
+    await env.DB.prepare("DELETE FROM web_session_checks WHERE token = ? AND guild_id = ?").bind(session.token, guildId).run();
+    return false;
+  }
+  await env.DB.prepare("INSERT OR REPLACE INTO web_session_checks (token, guild_id, verified_at) VALUES (?, ?, ?)")
+    .bind(session.token, guildId, Date.now())
+    .run();
+  return true;
+}
+
 /** /auth/logout */
 export async function logout(request, env) {
   const token = parseCookies(request)[SESSION_COOKIE];
   if (token) {
     await ensureSessionTable(env);
     await env.DB.prepare("DELETE FROM web_sessions WHERE token = ?").bind(token).run();
+    await env.DB.prepare("DELETE FROM web_session_checks WHERE token = ?").bind(token).run();
   }
   return new Response(null, { status: 302, headers: { Location: "/quotes", "Set-Cookie": cookie(SESSION_COOKIE, "", 0) } });
 }
