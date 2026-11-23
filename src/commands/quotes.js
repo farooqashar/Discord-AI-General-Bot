@@ -248,9 +248,9 @@ export function siteUrl(env, guildId) {
 
 const short = (text, n) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
 
-export function formatQuote(q) {
+export function formatQuote(q, timeZone = "America/New_York") {
   const who = q.speaker_id ? `<@${q.speaker_id}>` : q.speaker || "someone";
-  const date = new Date(q.posted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const date = new Date(q.posted_at).toLocaleDateString("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" });
   const stars = q.stars ? ` ⭐ ${q.stars}` : "";
   return `💬 "${short(q.text, 400)}" — ${who}, ${date}${stars}\nhttps://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
 }
@@ -261,6 +261,7 @@ export async function quotes(interaction, env) {
   await ensureQuoteTables(env);
   const reply = (content) => editOriginal(env, interaction, { content: content.slice(0, 1990), allowed_mentions: NO_MENTIONS });
   const guildId = interaction.guild_id;
+  const timeZone = env.TIMEZONE || "America/New_York";
 
   if ((action === "setup" || action === "off") && !canManageChannels(interaction)) {
     throw new UserFacingError("🔒 Only people who can manage channels can set up or stop the Quote Book.");
@@ -317,7 +318,7 @@ export async function quotes(interaction, env) {
       .bind(guildId)
       .all();
     if (!results.length) throw new UserFacingError("📖 No quotes saved yet.");
-    await reply(`🏆 **Top quotes**\n${results.map(formatQuote).join("\n")}`);
+    await reply(`🏆 **Top quotes**\n${results.map((r) => formatQuote(r, timeZone)).join("\n")}`);
     return;
   }
 
@@ -341,5 +342,5 @@ export async function quotes(interaction, env) {
     const filters = [from && `from "${from}"`, search && `about "${search}"`].filter(Boolean).join(" ");
     throw new UserFacingError(filters ? `📖 No quotes ${filters} yet.` : "📖 No quotes saved yet.");
   }
-  await reply(formatQuote(q));
+  await reply(formatQuote(q, timeZone));
 }

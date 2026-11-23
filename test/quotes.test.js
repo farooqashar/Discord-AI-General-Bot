@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { detectQuote, extractQuotes, formatQuote, quotes, syncQuoteBook } from "../src/commands/quotes.js";
 import { finishLogin, safeNext, startLogin } from "../src/web/auth.js";
-import { escapeHtml, handleWeb } from "../src/web/quotes-site.js";
+import { dailyIndex, escapeHtml, handleWeb } from "../src/web/quotes-site.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -162,6 +162,14 @@ test("formats a quote for Discord with a link and no pings", () => {
   assert.equal(line, '💬 "hi" — Jo, Nov 1, 2026 ⭐ 4\nhttps://discord.com/channels/g/q/5');
 });
 
+test("dates a late-evening quote by the day it was posted in TIMEZONE, not UTC", () => {
+  // 10:30pm Nov 21 in New York is 3:30am Nov 22 UTC.
+  const q = { guild_id: "g", channel_id: "q", message_id: "5", text: "hi", speaker: "Jo", posted_at: Date.UTC(2026, 10, 22, 3, 30), stars: 0 };
+  assert.match(formatQuote(q), /Jo, Nov 21, 2026\n/);
+  assert.match(formatQuote(q, "America/New_York"), /Jo, Nov 21, 2026\n/);
+  assert.match(formatQuote(q, "Europe/London"), /Jo, Nov 22, 2026\n/);
+});
+
 // --- sign-in and the website ---
 
 test("only redirects back to our own Quote Book pages after sign-in", () => {
@@ -255,4 +263,22 @@ test("everything shown on the page is escaped", async () => {
   const res = await handleWeb(new Request('https://bot.example/quotes/123456789?q="><script>', signedIn(db, ["123456789"])), { DB: db });
   const page = await res.text();
   assert.doesNotMatch(page, /<script|<img src=x|<b>srv/);
+});
+
+test("the site dates quotes and rolls the quote of the day over in TIMEZONE", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  // 10:30pm Nov 21 in Los Angeles is Nov 22 in New York and UTC.
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "late one", speaker: "Jo", posted_at: Date.UTC(2026, 10, 22, 6, 30), stars: 0 });
+  const render = async (env) => (await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), env)).text();
+  assert.match(await render({ DB: db, TIMEZONE: "America/Los_Angeles" }), /<span>Nov 21, 2026<\/span>/);
+  assert.match(await render({ DB: db }), /<span>Nov 22, 2026<\/span>/);
+
+  // 2am UTC Nov 22 is still Nov 21 in New York, so it picks the same quote as earlier that evening there.
+  const lateNy = new Date(Date.UTC(2026, 10, 22, 2));
+  const eveningNy = new Date(Date.UTC(2026, 10, 21, 23));
+  const nextDayNy = new Date(Date.UTC(2026, 10, 22, 15));
+  assert.equal(dailyIndex(1000, "America/New_York", lateNy), dailyIndex(1000, "America/New_York", eveningNy));
+  assert.equal(dailyIndex(1000, "UTC", lateNy), dailyIndex(1000, "UTC", nextDayNy));
+  assert.notEqual(dailyIndex(1000, "America/New_York", lateNy), dailyIndex(1000, "America/New_York", nextDayNy));
 });
