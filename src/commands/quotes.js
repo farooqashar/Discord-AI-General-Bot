@@ -53,6 +53,7 @@ export async function ensureQuoteTables(env) {
      )`,
   ).run();
   await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_quotes_guild ON quotes (guild_id, posted_at)").run();
+  await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_quotes_speaker ON quotes (guild_id, speaker_id)").run();
 }
 
 const OPEN = `"“„«`;
@@ -104,18 +105,35 @@ function withMention(q, mentions = []) {
   };
 }
 
+// A speaker stored as the bare mention of its own speaker_id, like "<@42>".
+const RAW_SPEAKER = (t) => `${t}.speaker IN ('<@' || ${t}.speaker_id || '>', '<@!' || ${t}.speaker_id || '>')`;
+const REPAIR_BATCH = 200;
+
 /**
- * Older quotes were saved with "<@id>" as the speaker. Give them the name the
- * same person has on another quote, or leave them as Unknown.
+ * Older quotes were saved with "<@id>" as the speaker. Give them, and quotes
+ * whose mention couldn't be named, the name the same person has on another
+ * quote. Raw mentions with no name yet become Unknown but keep speaker_id, so
+ * a later name still reaches them. Compound speakers ("<@42> and Jo") have no
+ * speaker_id and are left alone. Each pass handles at most REPAIR_BATCH rows.
  */
 export async function fixMentionSpeakers(env, guildId) {
-  await env.DB.prepare(
-    `UPDATE quotes SET speaker = (
-       SELECT q2.speaker FROM quotes q2
+  const named = `SELECT q2.speaker FROM quotes q2
        WHERE q2.guild_id = quotes.guild_id AND q2.speaker_id = quotes.speaker_id
-         AND q2.speaker IS NOT NULL AND q2.speaker NOT LIKE '<@%'
-       ORDER BY q2.posted_at DESC LIMIT 1)
-     WHERE guild_id = ? AND speaker LIKE '<@%'`,
+         AND q2.speaker IS NOT NULL AND q2.speaker <> '<@' || q2.speaker_id || '>' AND q2.speaker <> '<@!' || q2.speaker_id || '>'`;
+  await env.DB.prepare(
+    `UPDATE quotes SET speaker = (${named} ORDER BY q2.posted_at DESC LIMIT 1)
+     WHERE message_id IN (
+       SELECT message_id FROM quotes WHERE guild_id = ? AND speaker_id IS NOT NULL
+         AND (speaker IS NULL OR ${RAW_SPEAKER("quotes")}) AND EXISTS (${named})
+       LIMIT ${REPAIR_BATCH})`,
+  )
+    .bind(guildId)
+    .run();
+  await env.DB.prepare(
+    `UPDATE quotes SET speaker = NULL
+     WHERE message_id IN (
+       SELECT message_id FROM quotes WHERE guild_id = ? AND speaker_id IS NOT NULL AND ${RAW_SPEAKER("quotes")}
+       LIMIT ${REPAIR_BATCH})`,
   )
     .bind(guildId)
     .run();
@@ -161,7 +179,10 @@ async function aiQuotes(env, messages) {
 const starCount = (m) => (m.reactions ?? []).find((r) => r.emoji?.name === "⭐")?.count ?? 0;
 const reactionCount = (m) => (m.reactions ?? []).reduce((s, r) => s + (r.count ?? 0), 0);
 
-/** Find the quotes among some messages: patterns first, the AI for the rest. */
+/**
+ * Find the quotes among some messages: patterns first, the AI for the rest.
+ * `failed` lists the messages whose AI check failed, so a later sync can retry them.
+ */
 export async function extractQuotes(env, messages) {
   const candidates = messages.filter((m) => !m.author?.bot && m.content?.trim() && !m.content.trim().startsWith("/"));
   const found = [];
@@ -173,15 +194,17 @@ export async function extractQuotes(env, messages) {
   }
   const batches = [];
   for (let i = 0; i < leftovers.length; i += AI_BATCH) batches.push(leftovers.slice(i, i + AI_BATCH));
+  const failed = [];
   const results = await Promise.all(
     batches.map((b) =>
       aiQuotes(env, b).catch((err) => {
         console.warn("Quote AI check failed; keeping pattern matches only:", err.message);
+        failed.push(...b);
         return [];
       }),
     ),
   );
-  return [...found, ...results.flat()];
+  return { found: [...found, ...results.flat()], failed };
 }
 
 async function saveQuotes(env, guildId, channelId, found) {
@@ -209,16 +232,17 @@ async function saveQuotes(env, guildId, channelId, found) {
     // Re-imports (/quotes setup) repair quotes saved before mentions were named.
     if (quote.speakerId || /<@!?\d+>/.test(m.content)) {
       await env.DB.prepare(
-        `UPDATE quotes SET text = ?, speaker = ?
-         WHERE message_id = ? AND (speaker LIKE '<@%' OR text LIKE '%<@%')`,
+        `UPDATE quotes SET text = ?, speaker = ?, speaker_id = ?
+         WHERE message_id = ? AND (speaker IS NULL OR speaker LIKE '<@%' OR text LIKE '%<@%')`,
       )
-        .bind(quote.text.slice(0, 1000), quote.speaker, m.id)
+        .bind(quote.text.slice(0, 1000), quote.speaker, quote.speakerId, m.id)
         .run();
     }
   }
 }
 
 const newestId = (messages) => messages.reduce((max, m) => (BigInt(m.id) > BigInt(max) ? m.id : max), "0");
+const oldestId = (messages) => messages.reduce((min, m) => (BigInt(m.id) < BigInt(min) ? m.id : min), messages[0].id);
 
 /** Read a quotes channel's newest messages, save new quotes, refresh stars, pin the best. */
 export async function syncQuoteBook(env, book) {
@@ -226,12 +250,24 @@ export async function syncQuoteBook(env, book) {
   if (!recent.length) return { added: 0, pinned: 0 };
 
   // Claim before the slow part so overlapping runs don't redo it.
-  const last = book.last_message_id ?? "0";
-  await env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(newestId(recent), book.guild_id).run();
+  const before = book.last_message_id ?? null;
+  const last = before ?? "0";
+  const setCursor = (id) => env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(id, book.guild_id).run();
+  await setCursor(newestId(recent));
 
   const fresh = recent.filter((m) => BigInt(m.id) > BigInt(last));
-  const found = await extractQuotes(env, fresh);
-  await saveQuotes(env, book.guild_id, book.channel_id, found);
+  let found;
+  try {
+    let failed;
+    ({ found, failed } = await extractQuotes(env, fresh));
+    await saveQuotes(env, book.guild_id, book.channel_id, found);
+    // Hand messages the AI couldn't check back to the next run. Saving is idempotent, so redoing later ones is harmless.
+    if (failed.length) await setCursor(String(BigInt(oldestId(failed)) - 1n));
+  } catch (err) {
+    await setCursor(before).catch(() => {});
+    throw err;
+  }
+  await fixMentionSpeakers(env, book.guild_id).catch((err) => console.warn(`Couldn't name mentioned speakers in ${book.guild_id}:`, err.message));
 
   // Refresh reactions on recent quotes, and pin new hall-of-famers.
   let pinned = 0;
@@ -290,9 +326,9 @@ export function siteUrl(env, guildId) {
 
 const short = (text, n) => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
 
-export function formatQuote(q) {
+export function formatQuote(q, timeZone = "America/New_York") {
   const who = q.speaker_id ? `<@${q.speaker_id}>` : q.speaker || "someone";
-  const date = new Date(q.posted_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const date = new Date(q.posted_at).toLocaleDateString("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" });
   const stars = q.stars ? ` ⭐ ${q.stars}` : "";
   return `💬 "${short(q.text, 400)}" — ${who}, ${date}${stars}\nhttps://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
 }
@@ -303,6 +339,7 @@ export async function quotes(interaction, env) {
   await ensureQuoteTables(env);
   const reply = (content) => editOriginal(env, interaction, { content: content.slice(0, 1990), allowed_mentions: NO_MENTIONS });
   const guildId = interaction.guild_id;
+  const timeZone = env.TIMEZONE || "America/New_York";
 
   if ((action === "setup" || action === "off") && !canManageChannels(interaction)) {
     throw new UserFacingError("🔒 Only people who can manage channels can set up or stop the Quote Book.");
@@ -328,7 +365,7 @@ export async function quotes(interaction, env) {
 
     // Import recent history now, then keep up every 5 minutes.
     const history = await fetchHistory(env, channelId, BACKFILL_MESSAGES);
-    const found = await extractQuotes(env, history);
+    const { found } = await extractQuotes(env, history);
     await saveQuotes(env, guildId, channelId, found);
     await fixMentionSpeakers(env, guildId);
     await env.DB.prepare("UPDATE quote_books SET last_message_id = ? WHERE guild_id = ?").bind(history.length ? newestId(history) : null, guildId).run();
@@ -360,7 +397,7 @@ export async function quotes(interaction, env) {
       .bind(guildId)
       .all();
     if (!results.length) throw new UserFacingError("📖 No quotes saved yet.");
-    await reply(`🏆 **Top quotes**\n${results.map(formatQuote).join("\n")}`);
+    await reply(`🏆 **Top quotes**\n${results.map((r) => formatQuote(r, timeZone)).join("\n")}`);
     return;
   }
 
@@ -384,5 +421,5 @@ export async function quotes(interaction, env) {
     const filters = [from && `from "${from}"`, search && `about "${search}"`].filter(Boolean).join(" ");
     throw new UserFacingError(filters ? `📖 No quotes ${filters} yet.` : "📖 No quotes saved yet.");
   }
-  await reply(formatQuote(q));
+  await reply(formatQuote(q, timeZone));
 }

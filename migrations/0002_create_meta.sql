@@ -1,5 +1,6 @@
 -- Small key/value table. Holds the last set of slash commands registered with
 -- Discord, so the bot can re-register automatically after a deploy changes them.
+-- The bot also creates this table on first use, so applying this is optional.
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,

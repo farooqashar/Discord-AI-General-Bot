@@ -1,7 +1,7 @@
 // The Quote Book website. Server-rendered HTML, no JavaScript, members only.
 
-import { ensureQuoteTables, fixMentionSpeakers } from "../commands/quotes.js";
-import { currentSession, finishLogin, logout, startLogin } from "./auth.js";
+import { ensureQuoteTables } from "../commands/quotes.js";
+import { currentSession, finishLogin, logout, startLogin, stillMember } from "./auth.js";
 
 const PAGE_SIZE = 120;
 
@@ -121,7 +121,7 @@ function page(title, body) {
 </html>`;
 }
 
-function gatePage({ heading, message, next, signedIn }) {
+function gatePage({ heading, message, next, signedIn, status }) {
   const action = signedIn
     ? `<a class="button" href="/auth/logout">Sign out</a>`
     : `<a class="button" href="/auth/login?next=${encodeURIComponent(next)}">Sign in with Discord</a>`;
@@ -130,31 +130,32 @@ function gatePage({ heading, message, next, signedIn }) {
       "Quote Book",
       `<main class="gate"><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(message)}</p><div>${action}</div></main>`,
     ),
-    signedIn ? 403 : 200,
+    status ?? (signedIn ? 403 : 200),
   );
 }
 
-const formatDate = (ms) =>
-  new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York" });
+const formatDate = (ms, timeZone) =>
+  new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone });
 
-const speakerOf = (q) => q.speaker || "Unknown";
+// A raw "<@id>" speaker is one the sync hasn't named yet.
+const speakerOf = (q) => (q.speaker && !/^<@!?\d+>$/.test(q.speaker) ? q.speaker : "Unknown");
 // Mentions the bot couldn't name when the quote was saved.
 const quoteText = (q) => q.text.replace(/<@!?\d+>/g, "@someone");
 const messageLink = (q) => `https://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
 
 /** Same quote all day, a different one tomorrow. */
-function dailyIndex(count, date = new Date()) {
-  const key = date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+export function dailyIndex(count, timeZone, date = new Date()) {
+  const key = date.toLocaleDateString("en-CA", { timeZone });
   let h = 0;
   for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h % count;
 }
 
-function quoteCard(q) {
+function quoteCard(q, timeZone) {
   const stars = q.stars ? `<span class="stars" title="${q.stars >= 3 ? "Hall of fame" : "Stars"}">⭐ ${q.stars}</span>` : "";
   return `<article class="${q.stars >= 3 ? "hof" : ""}">
 <blockquote><p>“${escapeHtml(quoteText(q))}”</p></blockquote>
-<footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at)}</span>${stars}<a href="${messageLink(q)}">Open in Discord</a></footer>
+<footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at, timeZone)}</span>${stars}<a href="${messageLink(q)}">Open in Discord</a></footer>
 </article>`;
 }
 
@@ -169,11 +170,11 @@ function link(params, changes) {
 }
 
 export async function renderQuoteBook(env, book, session, searchParams) {
+  const timeZone = env.TIMEZONE || "America/New_York";
   const q = (searchParams.get("q") ?? "").trim().slice(0, 100);
   const by = (searchParams.get("by") ?? "").trim().slice(0, 60);
   const sort = ["new", "top", "shuffle"].includes(searchParams.get("sort")) ? searchParams.get("sort") : "new";
   const params = { q, by, sort: sort === "new" ? "" : sort };
-  await fixMentionSpeakers(env, book.guild_id);
 
   const { results: totals } = await env.DB.prepare("SELECT COUNT(*) AS n FROM quotes WHERE guild_id = ?").bind(book.guild_id).all();
   const total = totals[0]?.n ?? 0;
@@ -181,7 +182,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
   let today = null;
   if (total) {
     today = await env.DB.prepare("SELECT * FROM quotes WHERE guild_id = ? ORDER BY message_id LIMIT 1 OFFSET ?")
-      .bind(book.guild_id, dailyIndex(total))
+      .bind(book.guild_id, dailyIndex(total, timeZone))
       .first();
   }
 
@@ -227,7 +228,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
   const filtered = q || by;
   const body = shown.length
     ? `<p class="count">${filtered ? `${shown.length} ${shown.length === 1 ? "quote matches" : "quotes match"}` : `${total} ${total === 1 ? "quote" : "quotes"} saved`}${shown.length === PAGE_SIZE ? `, showing the first ${PAGE_SIZE}` : ""}</p>
-<section class="wall">${shown.map(quoteCard).join("\n")}</section>`
+<section class="wall">${shown.map((quote) => quoteCard(quote, timeZone)).join("\n")}</section>`
     : total
       ? `<p class="empty">No quotes match${q ? ` “${escapeHtml(q)}”` : ""}${by ? ` from ${escapeHtml(by)}` : ""}. <a href="?">Show every quote</a></p>`
       : `<p class="empty">No quotes saved yet. Post one in the quotes channel, like <strong>"I'm not lost, the LIRR is" - Ashar</strong>, and it shows up here within a few minutes.</p>`;
@@ -247,7 +248,7 @@ ${by ? `<input type="hidden" name="by" value="${escapeHtml(by)}">` : ""}${params
 <nav class="filters" aria-label="Filter and sort">
 <div class="group">${sortLink("new", "Newest")}${sortLink("top", "Most starred")}${sortLink("shuffle", "Shuffle")}</div>
 <span class="gap"></span>
-<div class="group">${byLink(null, "Everyone")}${speakers.map((s) => byLink(s.name, `${s.name} (${s.n})`)).join("")}</div>
+<div class="group">${byLink(null, "Everyone")}${speakers.map((s) => byLink(s.name, `${speakerOf({ speaker: s.name })} (${s.n})`)).join("")}</div>
 </nav>
 ${body}
 <footer class="site">New quotes from the quotes channel appear within a few minutes. ⭐ a quote in Discord to help it into the hall of fame.</footer>
@@ -290,7 +291,16 @@ export async function handleWeb(request, env) {
   const book = await env.DB.prepare("SELECT * FROM quote_books WHERE guild_id = ?").bind(guildId).first();
   const hasAny = await env.DB.prepare("SELECT 1 FROM quotes WHERE guild_id = ? LIMIT 1").bind(guildId).first();
   if (!book && !hasAny) return gatePage({ heading: "Not found.", message: "That server doesn't have a Quote Book.", signedIn: true });
-  if (!session.guildIds.includes(guildId)) {
+  const member = await stillMember(env, session, guildId);
+  if (member === null) {
+    return gatePage({
+      heading: "Try again in a minute.",
+      message: "Discord didn't answer when we checked that you're still in this server.",
+      signedIn: true,
+      status: 503,
+    });
+  }
+  if (!member) {
     return gatePage({
       heading: "Members only.",
       message: `This Quote Book is for members of ${book?.guild_name || "that server"}. If you just joined, sign out and back in.`,

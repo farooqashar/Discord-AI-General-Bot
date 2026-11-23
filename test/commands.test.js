@@ -221,6 +221,7 @@ test("re-registers commands only when they changed since last time", async () =>
   let stored = null;
   const db = {
     prepare: (sql) => ({
+      run: async () => assert.match(sql, /^CREATE TABLE IF NOT EXISTS meta/),
       bind: (...args) => ({
         first: async () => (stored ? { value: stored } : null),
         run: async () => {

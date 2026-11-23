@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { detectQuote, extractQuotes, formatQuote, quotes, syncQuoteBook } from "../src/commands/quotes.js";
 import { finishLogin, safeNext, startLogin } from "../src/web/auth.js";
-import { escapeHtml, handleWeb } from "../src/web/quotes-site.js";
+import { dailyIndex, escapeHtml, handleWeb } from "../src/web/quotes-site.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -33,9 +33,10 @@ function fakeDb() {
   const books = new Map();
   const quotesT = new Map();
   const sessions = new Map();
+  const checks = new Map();
   const stmt = (sql, args = []) => ({
     async run() {
-      if (sql.startsWith("CREATE") || sql.startsWith("DELETE FROM web_sessions WHERE expires_at")) return {};
+      if (sql.startsWith("CREATE") || sql.startsWith("DELETE FROM web_sessions WHERE expires_at") || sql.includes("NOT IN")) return {};
       if (sql.startsWith("INSERT INTO quote_books")) {
         const [guild_id, guild_name, channel_id, last_message_id] = args;
         books.set(guild_id, { guild_id, guild_name, channel_id, last_message_id });
@@ -47,19 +48,35 @@ function fakeDb() {
           quotesT.set(message_id, { message_id, guild_id, channel_id, text, speaker, speaker_id, poster_id, poster_name, posted_at, stars, reactions, pinned });
         }
       } else if (sql.startsWith("UPDATE quotes SET text")) {
-        const q = quotesT.get(args[2]);
-        if (q && (q.speaker?.startsWith("<@") || /<@/.test(q.text))) Object.assign(q, { text: args[0], speaker: args[1] });
+        const q = quotesT.get(args[3]);
+        if (q && (q.speaker == null || q.speaker.startsWith("<@") || /<@/.test(q.text))) Object.assign(q, { text: args[0], speaker: args[1], speaker_id: args[2] });
       } else if (sql.startsWith("UPDATE quotes SET speaker")) {
         const rows = [...quotesT.values()].filter((q) => q.guild_id === args[0]);
-        for (const q of rows.filter((r) => r.speaker?.startsWith("<@"))) {
-          q.speaker = rows.find((r) => r.speaker_id === q.speaker_id && r.speaker && !r.speaker.startsWith("<@"))?.speaker ?? null;
+        const raw = (r) => r.speaker_id && [`<@${r.speaker_id}>`, `<@!${r.speaker_id}>`].includes(r.speaker);
+        const name = (q) => rows.find((r) => r.speaker_id === q.speaker_id && r.speaker && !raw(r))?.speaker;
+        for (const q of rows.filter((r) => r.speaker_id && (r.speaker == null || raw(r)))) {
+          if (sql.startsWith("UPDATE quotes SET speaker = NULL")) q.speaker = raw(q) ? null : q.speaker;
+          else if (name(q)) q.speaker = name(q);
         }
       } else if (sql.startsWith("UPDATE quotes SET stars")) {
         Object.assign(quotesT.get(args[3]), { stars: args[0], reactions: args[1], pinned: args[2] });
       } else if (sql.startsWith("INSERT INTO web_sessions")) {
         const [token, user_id, username, guild_ids, expires_at] = args;
         sessions.set(token, { token, user_id, username, guild_ids, expires_at });
-      } else if (sql.startsWith("DELETE FROM quote_books")) books.delete(args[0]);
+      } else if (sql.startsWith("UPDATE web_sessions SET guild_ids")) {
+        const session = sessions.get(args[0]);
+        session.guild_ids = JSON.stringify(JSON.parse(session.guild_ids).filter((id) => id !== args[1]));
+      } else if (sql.startsWith("INSERT OR REPLACE INTO web_session_checks")) {
+        checks.set(`${args[0]}/${args[1]}`, { verified_at: args[2], failed_at: null });
+      } else if (sql.startsWith("INSERT INTO web_session_checks")) {
+        const key = `${args[0]}/${args[1]}`;
+        checks.set(key, { verified_at: 0, ...checks.get(key), failed_at: args[2] });
+      } else if (sql.startsWith("DELETE FROM web_session_checks WHERE token = ? AND")) {
+        checks.delete(`${args[0]}/${args[1]}`);
+      } else if (sql.startsWith("DELETE FROM web_session_checks WHERE token = ?")) {
+        for (const key of checks.keys()) if (key.startsWith(`${args[0]}/`)) checks.delete(key);
+      } else if (sql.startsWith("DELETE FROM web_sessions WHERE token")) sessions.delete(args[0]);
+      else if (sql.startsWith("DELETE FROM quote_books")) books.delete(args[0]);
       return { meta: { changes: 1 } };
     },
     async all() {
@@ -70,13 +87,14 @@ function fakeDb() {
       return { results: [...quotesT.values()].filter((q) => q.guild_id === args[0]) };
     },
     async first() {
+      if (sql.includes("FROM web_session_checks")) return checks.get(`${args[0]}/${args[1]}`) ?? null;
       if (sql.includes("FROM web_sessions")) return sessions.get(args[0]) ?? null;
       if (sql.includes("FROM quote_books")) return books.get(args[0]) ?? null;
       const rows = [...quotesT.values()].filter((q) => q.guild_id === args[0]);
       return rows[0] ?? null;
     },
   });
-  return { books, quotes: quotesT, sessions, prepare: (sql) => ({ ...stmt(sql), bind: (...args) => stmt(sql, args) }) };
+  return { books, quotes: quotesT, sessions, checks, prepare: (sql) => ({ ...stmt(sql), bind: (...args) => stmt(sql, args) }) };
 }
 
 const msg = (id, content, extra = {}) => ({
@@ -107,7 +125,7 @@ test("messier quotes go to the AI; bots and slash commands are skipped", async (
     prompt = JSON.parse(init.body).messages[0].content;
     return { content: [{ type: "tool_use", name: "save_quotes", input: { quotes: [{ index: 0, text: "i only eat beige food", speaker: "Jo" }] } }] };
   }]]);
-  const found = await extractQuotes({}, [
+  const { found, failed } = await extractQuotes({}, [
     msg("1", '"clean one" - Ashar'),
     msg("2", "jo at dinner tonight: i only eat beige food"),
     msg("3", "bot stuff", { author: { id: "b", bot: true } }),
@@ -118,6 +136,7 @@ test("messier quotes go to the AI; bots and slash commands are skipped", async (
     ["1", "clean one", "Ashar"],
     ["2", "i only eat beige food", "Jo"],
   ]);
+  assert.deepEqual(failed, []);
 });
 
 test("mentions become names, in the speaker and in the text", () => {
@@ -175,6 +194,48 @@ test("sync saves a mentioned speaker by name, so /quotes random from: finds them
   assert.match(formatQuote(saved), /— <@123456789012345678>,/, "Discord still shows the mention");
 });
 
+test("sync retries messages the AI couldn't check once it works again", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  let aiDown = true;
+  let aiPrompt;
+  mock([
+    ["/channels/q/messages?limit=100", () => [
+      msg("13", '"clean one" - Sunny'),
+      msg("12", "Jo said she only eats beige food"),
+      msg("11", "just chatting"),
+    ]],
+    ["anthropic", (_u, init) => {
+      if (aiDown) return new Response("overloaded", { status: 500 });
+      aiPrompt = JSON.parse(init.body).messages[0].content;
+      const index = aiPrompt.split("\n").findIndex((line) => line.includes("beige food"));
+      return { content: [{ type: "tool_use", name: "save_quotes", input: { quotes: [{ index, text: "she only eats beige food", speaker: "Jo" }] } }] };
+    }],
+  ]);
+
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("13").text, "clean one", "pattern matches are saved right away");
+  assert.ok(!db.quotes.has("12"));
+  assert.equal(db.books.get("g").last_message_id, "10", "the cursor stops before the messages the AI missed");
+
+  aiDown = false;
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("12").text, "she only eats beige food");
+  assert.equal(db.quotes.size, 2);
+  assert.equal(db.books.get("g").last_message_id, "13");
+  assert.doesNotMatch(aiPrompt, /clean one/);
+});
+
+test("sync hands the messages back if saving fails", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  mock([["/channels/q/messages?limit=100", () => [msg("12", '"brand new" - Sunny')]]]);
+  const prepare = db.prepare;
+  db.prepare = (sql) => (sql.startsWith("INSERT OR IGNORE INTO quotes") ? assert.fail("D1 is down") : prepare(sql));
+  await assert.rejects(syncQuoteBook({ DB: db }, db.books.get("g")), /D1 is down/);
+  assert.equal(db.books.get("g").last_message_id, "10");
+});
+
 test("/quotes setup needs a public channel and imports history", async () => {
   const db = fakeDb();
   const base = { application_id: "app", token: "t", channel_id: "q", guild_id: "g", member: { user: { id: "me" }, permissions: MANAGE } };
@@ -202,6 +263,14 @@ test("/quotes setup needs a public channel and imports history", async () => {
 test("formats a quote for Discord with a link and no pings", () => {
   const line = formatQuote({ guild_id: "g", channel_id: "q", message_id: "5", text: "hi", speaker: "Jo", speaker_id: null, posted_at: Date.UTC(2026, 10, 1, 15), stars: 4 });
   assert.equal(line, '💬 "hi" — Jo, Nov 1, 2026 ⭐ 4\nhttps://discord.com/channels/g/q/5');
+});
+
+test("dates a late-evening quote by the day it was posted in TIMEZONE, not UTC", () => {
+  // 10:30pm Nov 21 in New York is 3:30am Nov 22 UTC.
+  const q = { guild_id: "g", channel_id: "q", message_id: "5", text: "hi", speaker: "Jo", posted_at: Date.UTC(2026, 10, 22, 3, 30), stars: 0 };
+  assert.match(formatQuote(q), /Jo, Nov 21, 2026\n/);
+  assert.match(formatQuote(q, "America/New_York"), /Jo, Nov 21, 2026\n/);
+  assert.match(formatQuote(q, "Europe/London"), /Jo, Nov 22, 2026\n/);
 });
 
 // --- sign-in and the website ---
@@ -280,6 +349,7 @@ test("the site shows a sign-in page, blocks non-members, and shows members the q
   assert.equal(outsider.status, 403);
   assert.doesNotMatch(await outsider.text(), /LIRR/);
 
+  mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
   const member = await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), { DB: db });
   assert.equal(member.status, 200);
   const page = await member.text();
@@ -293,15 +363,140 @@ test("the site never shows raw <@id> mentions, even on quotes saved before they 
   const db = fakeDb();
   db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
   const row = (id, extra) => ({ message_id: id, guild_id: "123456789", channel_id: "q", posted_at: Date.now(), stars: 0, ...extra });
-  db.quotes.set("5", row("5", { text: "I'm not lost", speaker: "Ashar", speaker_id: "42" }));
   db.quotes.set("6", row("6", { text: "<@7> stole my fries", speaker: "<@42>", speaker_id: "42" }));
-  db.quotes.set("7", row("7", { text: "who am I", speaker: "<@!99>", speaker_id: "99" }));
+  mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
   const res = await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), { DB: db });
   const page = await res.text();
   assert.doesNotMatch(page, /&lt;@!?\d+&gt;|<@!?\d+>/);
   assert.match(page, /@someone stole my fries/);
+  assert.match(page, /<strong>Unknown<\/strong>/);
+  assert.equal(db.quotes.get("6").speaker, "<@42>", "rendering a page doesn't write to the database");
+});
+
+test("sync names old <@id> speakers from the person's other quotes, and keeps the rest recoverable", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  const row = (id, extra) => ({ message_id: id, guild_id: "g", channel_id: "q", text: "words", posted_at: 1, stars: 0, ...extra });
+  db.quotes.set("5", row("5", { speaker: "Ashar", speaker_id: "42" }));
+  db.quotes.set("6", row("6", { speaker: "<@42>", speaker_id: "42" }));
+  db.quotes.set("7", row("7", { speaker: "<@!99>", speaker_id: "99" }));
+  db.quotes.set("8", row("8", { speaker: "<@42> and Jo", speaker_id: null }));
+  mock([["/channels/q/messages?limit=100", () => [msg("9", "just chatting")]]]);
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
   assert.equal(db.quotes.get("6").speaker, "Ashar", "takes the name the same person has on another quote");
-  assert.equal(db.quotes.get("7").speaker, null, "shown as Unknown when there's no name to use");
+  assert.equal(db.quotes.get("7").speaker, null, "Unknown while there's no name to use");
+  assert.equal(db.quotes.get("7").speaker_id, "99");
+  assert.equal(db.quotes.get("8").speaker, "<@42> and Jo", "a compound speaker isn't erased");
+
+  // Once user 99 is named on a new quote, the old one gets the name too.
+  db.books.get("g").last_message_id = "10";
+  mock([["/channels/q/messages?limit=100", () => [msg("11", '"hello" - <@99>', { mentions: [{ id: "99", username: "sunny" }] })]]]);
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("7").speaker, "sunny");
+});
+
+test("re-importing a message replaces its speaker and speaker_id together", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  db.quotes.set("11", { message_id: "11", guild_id: "g", channel_id: "q", text: "hi", speaker: "<@42>", speaker_id: "42", posted_at: 1, stars: 0 });
+  mock([["/channels/q/messages?limit=100", () => [msg("11", '"hi" - <@7>', { mentions: [{ id: "7", username: "sunny" }] })]]]);
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.deepEqual([db.quotes.get("11").speaker, db.quotes.get("11").speaker_id], ["sunny", "7"]);
+});
+
+test("membership is re-checked with Discord every 15 minutes, and removed members lose access", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "I'm not lost, the LIRR is", speaker: "Ashar", posted_at: Date.now(), stars: 0 });
+  const req = signedIn(db, ["123456789", "987654321"]);
+  const view = () => handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db, DISCORD_TOKEN: "bot" });
+  const key = `${"a".repeat(64)}/123456789`;
+
+  // A current member: Discord is asked once, then trusted for 15 minutes without signing in again.
+  let calls = mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
+  assert.equal((await view()).status, 200);
+  assert.equal((await view()).status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].headers.Authorization, "Bot bot");
+
+  // Kicked or banned: still allowed inside the window, denied once it's stale.
+  calls = mock([["/guilds/123456789/members/u1", () => Response.json({ message: "Unknown Member", code: 10007 }, { status: 404 })]]);
+  assert.equal((await view()).status, 200);
+  assert.equal(calls.length, 0);
+  db.checks.get(key).verified_at = Date.now() - 16 * 60000;
+  const removed = await view();
+  assert.equal(removed.status, 403);
+  const html = await removed.text();
+  assert.match(html, /Members only/);
+  assert.doesNotMatch(html, /LIRR/);
+  assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["987654321"], "the server is dropped from the session");
+  assert.equal(db.checks.has(key), false);
+  calls = mock([]);
+  assert.equal((await view()).status, 403);
+  assert.equal(calls.length, 0, "no need to ask Discord again");
+});
+
+test("a failed membership re-check denies access and is logged", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "I'm not lost, the LIRR is", speaker: "Ashar", posted_at: Date.now(), stars: 0 });
+  const req = signedIn(db, ["123456789"]);
+  db.checks.set(`${"a".repeat(64)}/123456789`, { verified_at: Date.now() - 20 * 60000 });
+  mock([["/guilds/123456789/members/u1", () => new Response("oops", { status: 500 })]]);
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => logged.push(args.join(" "));
+  try {
+    const res = await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db });
+    assert.equal(res.status, 503);
+    assert.doesNotMatch(await res.text(), /LIRR/);
+  } finally {
+    console.error = realError;
+  }
+  assert.match(logged.join("\n"), /membership re-check failed.*500/);
+  assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["123456789"], "an outage doesn't sign anyone out of a server");
+
+  // Reloading within the minute doesn't ask Discord again; after it, Discord is asked and a member gets in.
+  let calls = mock([["/guilds/123456789/members/u1", () => ({ user: { id: "u1" } })]]);
+  console.error = () => {};
+  try {
+    assert.equal((await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db })).status, 503);
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(calls.length, 0);
+  db.checks.get(`${"a".repeat(64)}/123456789`).failed_at = Date.now() - 61000;
+  assert.equal((await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db })).status, 200);
+  assert.equal(calls.length, 1);
+});
+
+test("a 404 that isn't Unknown Member, or a long rate limit, denies access without dropping the server", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "I'm not lost, the LIRR is", speaker: "Ashar", posted_at: Date.now(), stars: 0 });
+  const req = signedIn(db, ["123456789"]);
+  const key = `${"a".repeat(64)}/123456789`;
+  const realError = console.error;
+  console.error = () => {};
+  try {
+    // The bot lost access to the server: Discord says Unknown Guild, which says nothing about the visitor.
+    mock([["/guilds/123456789/members/u1", () => Response.json({ message: "Unknown Guild", code: 10004 }, { status: 404 })]]);
+    const res = await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db });
+    assert.equal(res.status, 503);
+    assert.doesNotMatch(await res.text(), /LIRR/);
+    assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["123456789"]);
+
+    // Rate limited for a minute: give up at once instead of keeping the visitor waiting.
+    db.checks.delete(key);
+    const calls = mock([["/guilds/123456789/members/u1", () => Response.json({ retry_after: 60 }, { status: 429 })]]);
+    const started = Date.now();
+    assert.equal((await handleWeb(new Request("https://bot.example/quotes/123456789", req), { DB: db })).status, 503);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(calls.length, 1);
+  } finally {
+    console.error = realError;
+  }
+  assert.deepEqual(JSON.parse(db.sessions.get("a".repeat(64)).guild_ids), ["123456789"]);
 });
 
 test("everything shown on the page is escaped", async () => {
@@ -309,7 +504,27 @@ test("everything shown on the page is escaped", async () => {
   const db = fakeDb();
   db.books.set("123456789", { guild_id: "123456789", guild_name: "<b>srv</b>", channel_id: "q" });
   db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "<script>alert(1)</script>", speaker: '"><img src=x>', posted_at: Date.now(), stars: 0 });
+  mock([]);
   const res = await handleWeb(new Request('https://bot.example/quotes/123456789?q="><script>', signedIn(db, ["123456789"])), { DB: db });
   const page = await res.text();
   assert.doesNotMatch(page, /<script|<img src=x|<b>srv/);
+});
+
+test("the site dates quotes and rolls the quote of the day over in TIMEZONE", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  // 10:30pm Nov 21 in Los Angeles is Nov 22 in New York and UTC.
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "late one", speaker: "Jo", posted_at: Date.UTC(2026, 10, 22, 6, 30), stars: 0 });
+  mock([]);
+  const render = async (env) => (await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), env)).text();
+  assert.match(await render({ DB: db, TIMEZONE: "America/Los_Angeles" }), /<span>Nov 21, 2026<\/span>/);
+  assert.match(await render({ DB: db }), /<span>Nov 22, 2026<\/span>/);
+
+  // 2am UTC Nov 22 is still Nov 21 in New York, so it picks the same quote as earlier that evening there.
+  const lateNy = new Date(Date.UTC(2026, 10, 22, 2));
+  const eveningNy = new Date(Date.UTC(2026, 10, 21, 23));
+  const nextDayNy = new Date(Date.UTC(2026, 10, 22, 15));
+  assert.equal(dailyIndex(1000, "America/New_York", lateNy), dailyIndex(1000, "America/New_York", eveningNy));
+  assert.equal(dailyIndex(1000, "UTC", lateNy), dailyIndex(1000, "UTC", nextDayNy));
+  assert.notEqual(dailyIndex(1000, "America/New_York", lateNy), dailyIndex(1000, "America/New_York", nextDayNy));
 });

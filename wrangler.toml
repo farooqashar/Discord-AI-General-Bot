@@ -21,6 +21,7 @@ DISCORD_APP_ID = "1570256194399117313"
 PUBLIC_URL = "https://discord-ai-general-bot.asharfarooq.workers.dev"
 
 # Stores pending /remind reminders and the last registered command list.
+# On your own Cloudflare account, set database_id to your database (README, Setup step 2).
 [[d1_databases]]
 binding = "DB"
 database_name = "discord-bot-reminders"
