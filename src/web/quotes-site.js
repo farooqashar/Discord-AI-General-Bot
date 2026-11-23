@@ -134,25 +134,25 @@ function gatePage({ heading, message, next, signedIn, status }) {
   );
 }
 
-const formatDate = (ms) =>
-  new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/New_York" });
+const formatDate = (ms, timeZone) =>
+  new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone });
 
 const speakerOf = (q) => q.speaker || "Unknown";
 const messageLink = (q) => `https://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
 
 /** Same quote all day, a different one tomorrow. */
-function dailyIndex(count, date = new Date()) {
-  const key = date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+export function dailyIndex(count, timeZone, date = new Date()) {
+  const key = date.toLocaleDateString("en-CA", { timeZone });
   let h = 0;
   for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h % count;
 }
 
-function quoteCard(q) {
+function quoteCard(q, timeZone) {
   const stars = q.stars ? `<span class="stars" title="${q.stars >= 3 ? "Hall of fame" : "Stars"}">⭐ ${q.stars}</span>` : "";
   return `<article class="${q.stars >= 3 ? "hof" : ""}">
 <blockquote><p>“${escapeHtml(q.text)}”</p></blockquote>
-<footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at)}</span>${stars}<a href="${messageLink(q)}">Open in Discord</a></footer>
+<footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at, timeZone)}</span>${stars}<a href="${messageLink(q)}">Open in Discord</a></footer>
 </article>`;
 }
 
@@ -167,6 +167,7 @@ function link(params, changes) {
 }
 
 export async function renderQuoteBook(env, book, session, searchParams) {
+  const timeZone = env.TIMEZONE || "America/New_York";
   const q = (searchParams.get("q") ?? "").trim().slice(0, 100);
   const by = (searchParams.get("by") ?? "").trim().slice(0, 60);
   const sort = ["new", "top", "shuffle"].includes(searchParams.get("sort")) ? searchParams.get("sort") : "new";
@@ -178,7 +179,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
   let today = null;
   if (total) {
     today = await env.DB.prepare("SELECT * FROM quotes WHERE guild_id = ? ORDER BY message_id LIMIT 1 OFFSET ?")
-      .bind(book.guild_id, dailyIndex(total))
+      .bind(book.guild_id, dailyIndex(total, timeZone))
       .first();
   }
 
@@ -224,7 +225,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
   const filtered = q || by;
   const body = shown.length
     ? `<p class="count">${filtered ? `${shown.length} ${shown.length === 1 ? "quote matches" : "quotes match"}` : `${total} ${total === 1 ? "quote" : "quotes"} saved`}${shown.length === PAGE_SIZE ? `, showing the first ${PAGE_SIZE}` : ""}</p>
-<section class="wall">${shown.map(quoteCard).join("\n")}</section>`
+<section class="wall">${shown.map((quote) => quoteCard(quote, timeZone)).join("\n")}</section>`
     : total
       ? `<p class="empty">No quotes match${q ? ` “${escapeHtml(q)}”` : ""}${by ? ` from ${escapeHtml(by)}` : ""}. <a href="?">Show every quote</a></p>`
       : `<p class="empty">No quotes saved yet. Post one in the quotes channel, like <strong>"I'm not lost, the LIRR is" - Ashar</strong>, and it shows up here within a few minutes.</p>`;

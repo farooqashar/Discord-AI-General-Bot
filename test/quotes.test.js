@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { detectQuote, extractQuotes, formatQuote, quotes, syncQuoteBook } from "../src/commands/quotes.js";
 import { finishLogin, safeNext, startLogin } from "../src/web/auth.js";
-import { escapeHtml, handleWeb } from "../src/web/quotes-site.js";
+import { dailyIndex, escapeHtml, handleWeb } from "../src/web/quotes-site.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -107,7 +107,7 @@ test("messier quotes go to the AI; bots and slash commands are skipped", async (
     prompt = JSON.parse(init.body).messages[0].content;
     return { content: [{ type: "tool_use", name: "save_quotes", input: { quotes: [{ index: 0, text: "i only eat beige food", speaker: "Jo" }] } }] };
   }]]);
-  const found = await extractQuotes({}, [
+  const { found, failed } = await extractQuotes({}, [
     msg("1", '"clean one" - Ashar'),
     msg("2", "jo at dinner tonight: i only eat beige food"),
     msg("3", "bot stuff", { author: { id: "b", bot: true } }),
@@ -118,6 +118,7 @@ test("messier quotes go to the AI; bots and slash commands are skipped", async (
     ["1", "clean one", "Ashar"],
     ["2", "i only eat beige food", "Jo"],
   ]);
+  assert.deepEqual(failed, []);
 });
 
 // --- syncing ---
@@ -142,6 +143,48 @@ test("sync saves new quotes, refreshes stars, and pins at 3 ⭐", async () => {
   assert.deepEqual({ stars: db.quotes.get("9").stars, pinned: db.quotes.get("9").pinned }, { stars: 3, pinned: 1 });
   assert.ok(calls.some((c) => c.method === "PUT" && c.url.endsWith("/channels/q/messages/pins/9")));
   assert.ok(!calls.some((c) => c.method === "PUT" && c.url.endsWith("/pins/12")), "new quote without stars isn't pinned");
+});
+
+test("sync retries messages the AI couldn't check once it works again", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  let aiDown = true;
+  let aiPrompt;
+  mock([
+    ["/channels/q/messages?limit=100", () => [
+      msg("13", '"clean one" - Sunny'),
+      msg("12", "Jo said she only eats beige food"),
+      msg("11", "just chatting"),
+    ]],
+    ["anthropic", (_u, init) => {
+      if (aiDown) return new Response("overloaded", { status: 500 });
+      aiPrompt = JSON.parse(init.body).messages[0].content;
+      const index = aiPrompt.split("\n").findIndex((line) => line.includes("beige food"));
+      return { content: [{ type: "tool_use", name: "save_quotes", input: { quotes: [{ index, text: "she only eats beige food", speaker: "Jo" }] } }] };
+    }],
+  ]);
+
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("13").text, "clean one", "pattern matches are saved right away");
+  assert.ok(!db.quotes.has("12"));
+  assert.equal(db.books.get("g").last_message_id, "10", "the cursor stops before the messages the AI missed");
+
+  aiDown = false;
+  await syncQuoteBook({ DB: db }, db.books.get("g"));
+  assert.equal(db.quotes.get("12").text, "she only eats beige food");
+  assert.equal(db.quotes.size, 2);
+  assert.equal(db.books.get("g").last_message_id, "13");
+  assert.doesNotMatch(aiPrompt, /clean one/);
+});
+
+test("sync hands the messages back if saving fails", async () => {
+  const db = fakeDb();
+  db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
+  mock([["/channels/q/messages?limit=100", () => [msg("12", '"brand new" - Sunny')]]]);
+  const prepare = db.prepare;
+  db.prepare = (sql) => (sql.startsWith("INSERT OR IGNORE INTO quotes") ? assert.fail("D1 is down") : prepare(sql));
+  await assert.rejects(syncQuoteBook({ DB: db }, db.books.get("g")), /D1 is down/);
+  assert.equal(db.books.get("g").last_message_id, "10");
 });
 
 test("/quotes setup needs a public channel and imports history", async () => {
@@ -171,6 +214,14 @@ test("/quotes setup needs a public channel and imports history", async () => {
 test("formats a quote for Discord with a link and no pings", () => {
   const line = formatQuote({ guild_id: "g", channel_id: "q", message_id: "5", text: "hi", speaker: "Jo", speaker_id: null, posted_at: Date.UTC(2026, 10, 1, 15), stars: 4 });
   assert.equal(line, '💬 "hi" — Jo, Nov 1, 2026 ⭐ 4\nhttps://discord.com/channels/g/q/5');
+});
+
+test("dates a late-evening quote by the day it was posted in TIMEZONE, not UTC", () => {
+  // 10:30pm Nov 21 in New York is 3:30am Nov 22 UTC.
+  const q = { guild_id: "g", channel_id: "q", message_id: "5", text: "hi", speaker: "Jo", posted_at: Date.UTC(2026, 10, 22, 3, 30), stars: 0 };
+  assert.match(formatQuote(q), /Jo, Nov 21, 2026\n/);
+  assert.match(formatQuote(q, "America/New_York"), /Jo, Nov 21, 2026\n/);
+  assert.match(formatQuote(q, "Europe/London"), /Jo, Nov 22, 2026\n/);
 });
 
 // --- sign-in and the website ---
@@ -321,4 +372,22 @@ test("everything shown on the page is escaped", async () => {
   const res = await handleWeb(new Request('https://bot.example/quotes/123456789?q="><script>', signedIn(db, ["123456789"])), { DB: db });
   const page = await res.text();
   assert.doesNotMatch(page, /<script|<img src=x|<b>srv/);
+});
+
+test("the site dates quotes and rolls the quote of the day over in TIMEZONE", async () => {
+  const db = fakeDb();
+  db.books.set("123456789", { guild_id: "123456789", guild_name: "MIT friends", channel_id: "q" });
+  // 10:30pm Nov 21 in Los Angeles is Nov 22 in New York and UTC.
+  db.quotes.set("5", { message_id: "5", guild_id: "123456789", channel_id: "q", text: "late one", speaker: "Jo", posted_at: Date.UTC(2026, 10, 22, 6, 30), stars: 0 });
+  const render = async (env) => (await handleWeb(new Request("https://bot.example/quotes/123456789", signedIn(db, ["123456789"])), env)).text();
+  assert.match(await render({ DB: db, TIMEZONE: "America/Los_Angeles" }), /<span>Nov 21, 2026<\/span>/);
+  assert.match(await render({ DB: db }), /<span>Nov 22, 2026<\/span>/);
+
+  // 2am UTC Nov 22 is still Nov 21 in New York, so it picks the same quote as earlier that evening there.
+  const lateNy = new Date(Date.UTC(2026, 10, 22, 2));
+  const eveningNy = new Date(Date.UTC(2026, 10, 21, 23));
+  const nextDayNy = new Date(Date.UTC(2026, 10, 22, 15));
+  assert.equal(dailyIndex(1000, "America/New_York", lateNy), dailyIndex(1000, "America/New_York", eveningNy));
+  assert.equal(dailyIndex(1000, "UTC", lateNy), dailyIndex(1000, "UTC", nextDayNy));
+  assert.notEqual(dailyIndex(1000, "America/New_York", lateNy), dailyIndex(1000, "America/New_York", nextDayNy));
 });
