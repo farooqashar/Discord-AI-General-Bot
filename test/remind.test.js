@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { postDueReminders } from "../src/commands/remind.js";
+import { syncCommandsIfChanged } from "../src/register.js";
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -13,7 +14,9 @@ function fakeDb(rows = []) {
   let nextId = Math.max(0, ...table.keys()) + 1;
   const stmt = (sql, args) => ({
     run: async () => {
-      if (sql.startsWith("INSERT")) {
+      if (sql.startsWith("CREATE")) {
+        // The table and index already exist in memory.
+      } else if (sql.startsWith("INSERT")) {
         const [channel_id, user_id, message, due_at, created_at] = args;
         const id = nextId++;
         table.set(id, { id, channel_id, user_id, message, due_at, created_at });
@@ -28,7 +31,7 @@ function fakeDb(rows = []) {
       return { results: due.slice(0, 25) };
     },
   });
-  return { table, prepare: (sql) => ({ bind: (...args) => stmt(sql, args) }) };
+  return { table, prepare: (sql) => ({ ...stmt(sql, []), bind: (...args) => stmt(sql, args) }) };
 }
 
 /** Answer every Discord call with `respond()`, recording the channels posted to. */
@@ -119,4 +122,41 @@ test("reminders that keep failing don't hold up other due reminders", async () =
   assert.ok(posted.includes("ok"), "the healthy reminder goes out on the next run");
   assert.equal(db.table.size, 25);
   assert.ok([...db.table.values()].every((r) => r.channel_id === "broken"));
+});
+
+/** A D1 stand-in for a fresh database: any query on a table that wasn't created yet fails like D1 does. */
+function emptyDb() {
+  const created = new Set();
+  const stmt = (sql) => {
+    const check = () => {
+      const made = sql.match(/^CREATE TABLE IF NOT EXISTS (\w+)/);
+      if (made) return created.add(made[1]);
+      const used = sql.match(/(?:FROM|INTO|ON) (\w+)/)[1];
+      if (!created.has(used)) throw new Error(`D1_ERROR: no such table: ${used}`);
+    };
+    return {
+      run: async () => (check(), { meta: { changes: 0 } }),
+      all: async () => (check(), { results: [] }),
+      first: async () => (check(), null),
+    };
+  };
+  return { created, prepare: (sql) => ({ ...stmt(sql), bind: () => stmt(sql) }) };
+}
+
+test("the reminder check works on a fresh database that never had migrations applied", async () => {
+  const db = emptyDb();
+  await postDueReminders({ DB: db });
+  assert.ok(db.created.has("reminders"));
+});
+
+test("command sync works on a fresh database that never had migrations applied", async () => {
+  const db = emptyDb();
+  const registered = [];
+  globalThis.fetch = async (url, init) => {
+    registered.push(String(url));
+    return Response.json(JSON.parse(init.body));
+  };
+  await syncCommandsIfChanged({ DB: db, DISCORD_APP_ID: "app123", DISCORD_TOKEN: "t" });
+  assert.ok(db.created.has("meta"));
+  assert.deepEqual(registered, ["https://discord.com/api/v10/applications/app123/commands"]);
 });
