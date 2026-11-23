@@ -368,7 +368,6 @@ const DEFINITIONS = [
           { type: 3, name: "search", description: "Only quotes containing these words", max_length: 100 },
         ],
       },
-      { type: 1, name: "top", description: "The most-starred quotes" },
       { type: 1, name: "site", description: "Get the link to the Quote Book website" },
       {
         type: 1,

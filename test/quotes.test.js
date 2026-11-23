@@ -152,26 +152,23 @@ test("mentions become names, in the speaker and in the text", () => {
 
 // --- syncing ---
 
-test("sync saves new quotes, refreshes stars, and pins at 3 ⭐", async () => {
+test("sync saves new quotes and never pins anything", async () => {
   const db = fakeDb();
   db.books.set("g", { guild_id: "g", channel_id: "q", last_message_id: "10" });
-  db.quotes.set("9", { message_id: "9", guild_id: "g", channel_id: "q", text: "old one", stars: 1, reactions: 1, pinned: 0 });
   const calls = mock([
-    ["/channels/q/messages/pins/", () => new Response(null, { status: 204 })],
     ["/channels/q/messages?limit=100", () => [
-      msg("12", '"brand new" - Sunny'),
+      msg("12", '"brand new" - Sunny', { reactions: [{ count: 5, emoji: { name: "⭐" } }] }),
       msg("11", "just chatting", {}),
-      msg("9", '"old one" - Jo', { reactions: [{ count: 3, emoji: { name: "⭐" } }] }),
+      msg("9", '"old one" - Jo'),
     ]],
     ["anthropic", () => ({ content: [{ type: "tool_use", name: "save_quotes", input: { quotes: [] } }] })],
   ]);
   const out = await syncQuoteBook({ DB: db }, db.books.get("g"));
-  assert.equal(out.added, 1);
+  assert.deepEqual(out, { added: 1 });
   assert.equal(db.quotes.get("12").text, "brand new");
+  assert.ok(!db.quotes.has("9"), "messages from before the last sync are left alone");
   assert.equal(db.books.get("g").last_message_id, "12");
-  assert.deepEqual({ stars: db.quotes.get("9").stars, pinned: db.quotes.get("9").pinned }, { stars: 3, pinned: 1 });
-  assert.ok(calls.some((c) => c.method === "PUT" && c.url.endsWith("/channels/q/messages/pins/9")));
-  assert.ok(!calls.some((c) => c.method === "PUT" && c.url.endsWith("/pins/12")), "new quote without stars isn't pinned");
+  assert.ok(!calls.some((c) => c.method === "PUT" || c.url.includes("/pins")), "no pinning");
 });
 
 test("sync saves a mentioned speaker by name, so /quotes random from: finds them", async () => {
@@ -262,7 +259,7 @@ test("/quotes setup needs a public channel and imports history", async () => {
 
 test("formats a quote for Discord with a link and no pings", () => {
   const line = formatQuote({ guild_id: "g", channel_id: "q", message_id: "5", text: "hi", speaker: "Jo", speaker_id: null, posted_at: Date.UTC(2026, 10, 1, 15), stars: 4 });
-  assert.equal(line, '💬 "hi" — Jo, Nov 1, 2026 ⭐ 4\nhttps://discord.com/channels/g/q/5');
+  assert.equal(line, '💬 "hi" — Jo, Nov 1, 2026\nhttps://discord.com/channels/g/q/5');
 });
 
 test("dates a late-evening quote by the day it was posted in TIMEZONE, not UTC", () => {
@@ -357,6 +354,7 @@ test("the site shows a sign-in page, blocks non-members, and shows members the q
   assert.match(page, /Quote Book <span>MIT friends<\/span>/);
   assert.match(member.headers.get("Content-Security-Policy"), /default-src 'none'/);
   assert.doesNotMatch(page, /<script/i, "no JavaScript on the page");
+  assert.doesNotMatch(page, /⭐|Most starred|hall of fame/i, "no stars anywhere");
 });
 
 test("the site never shows raw <@id> mentions, even on quotes saved before they were named", async () => {

@@ -82,8 +82,6 @@ nav.filters .gap { flex-basis: 100%; height: 0; }
 .wall blockquote p { margin: 0; font-size: 1.32rem; line-height: 1.32; font-weight: 600; letter-spacing: -0.01em; }
 .wall footer { margin-top: 10px; color: var(--muted); font-size: 0.95rem; display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .wall footer strong { color: var(--ink); font-weight: 600; }
-.wall .stars { color: var(--muted); }
-.wall .hof .stars { color: var(--pink); font-weight: 700; }
 
 .empty { padding: 60px 0 100px; font-size: 1.15rem; }
 .gate { min-height: 100vh; display: grid; place-content: center; padding: 40px 24px; }
@@ -152,10 +150,9 @@ export function dailyIndex(count, timeZone, date = new Date()) {
 }
 
 function quoteCard(q, timeZone) {
-  const stars = q.stars ? `<span class="stars" title="${q.stars >= 3 ? "Hall of fame" : "Stars"}">⭐ ${q.stars}</span>` : "";
-  return `<article class="${q.stars >= 3 ? "hof" : ""}">
+  return `<article>
 <blockquote><p>“${escapeHtml(quoteText(q))}”</p></blockquote>
-<footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at, timeZone)}</span>${stars}<a href="${messageLink(q)}">Open in Discord</a></footer>
+<footer><strong>${escapeHtml(speakerOf(q))}</strong><span>${formatDate(q.posted_at, timeZone)}</span><a href="${messageLink(q)}">Open in Discord</a></footer>
 </article>`;
 }
 
@@ -173,7 +170,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
   const timeZone = env.TIMEZONE || "America/New_York";
   const q = (searchParams.get("q") ?? "").trim().slice(0, 100);
   const by = (searchParams.get("by") ?? "").trim().slice(0, 60);
-  const sort = ["new", "top", "shuffle"].includes(searchParams.get("sort")) ? searchParams.get("sort") : "new";
+  const sort = ["new", "shuffle"].includes(searchParams.get("sort")) ? searchParams.get("sort") : "new";
   const params = { q, by, sort: sort === "new" ? "" : sort };
 
   const { results: totals } = await env.DB.prepare("SELECT COUNT(*) AS n FROM quotes WHERE guild_id = ?").bind(book.guild_id).all();
@@ -206,7 +203,7 @@ export async function renderQuoteBook(env, book, session, searchParams) {
       args.push(by);
     }
   }
-  const order = sort === "top" ? "stars DESC, reactions DESC, posted_at DESC" : sort === "shuffle" ? "RANDOM()" : "posted_at DESC";
+  const order = sort === "shuffle" ? "RANDOM()" : "posted_at DESC";
   const { results: shown } = await env.DB.prepare(
     `SELECT * FROM quotes WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ${PAGE_SIZE}`,
   )
@@ -246,12 +243,12 @@ ${by ? `<input type="hidden" name="by" value="${escapeHtml(by)}">` : ""}${params
 <button type="submit">Search</button>
 </form>
 <nav class="filters" aria-label="Filter and sort">
-<div class="group">${sortLink("new", "Newest")}${sortLink("top", "Most starred")}${sortLink("shuffle", "Shuffle")}</div>
+<div class="group">${sortLink("new", "Newest")}${sortLink("shuffle", "Shuffle")}</div>
 <span class="gap"></span>
 <div class="group">${byLink(null, "Everyone")}${speakers.map((s) => byLink(s.name, `${speakerOf({ speaker: s.name })} (${s.n})`)).join("")}</div>
 </nav>
 ${body}
-<footer class="site">New quotes from the quotes channel appear within a few minutes. ⭐ a quote in Discord to help it into the hall of fame.</footer>
+<footer class="site">New quotes from the quotes channel appear within a few minutes.</footer>
 </div>`,
     ),
   );

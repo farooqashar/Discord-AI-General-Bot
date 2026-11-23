@@ -4,8 +4,7 @@
 //
 // - /quotes setup channel:#quotes imports the recent history.
 // - Every 5 minutes the bot reads the newest messages, saves new quotes
-//   (a free pattern check first, the AI for messier ones), refreshes ⭐ counts,
-//   and pins quotes that reach STAR_PIN_THRESHOLD ⭐ (the hall of fame).
+//   (a free pattern check first, the AI for messier ones).
 
 import { extractStructured } from "../claude.js";
 import {
@@ -21,7 +20,6 @@ import {
 } from "../discord.js";
 import { isPublicChannel } from "./stats.js";
 
-export const STAR_PIN_THRESHOLD = 3;
 const BACKFILL_MESSAGES = 500;
 const AI_BATCH = 40;
 
@@ -176,8 +174,6 @@ async function aiQuotes(env, messages) {
     .map((q) => ({ message: messages[q.index], quote: withMention({ text: q.text.trim(), speaker: cleanSpeaker(q.speaker) }, messages[q.index].mentions) }));
 }
 
-const starCount = (m) => (m.reactions ?? []).find((r) => r.emoji?.name === "⭐")?.count ?? 0;
-const reactionCount = (m) => (m.reactions ?? []).reduce((s, r) => s + (r.count ?? 0), 0);
 
 /**
  * Find the quotes among some messages: patterns first, the AI for the rest.
@@ -211,8 +207,8 @@ async function saveQuotes(env, guildId, channelId, found) {
   for (const { message: m, quote } of found) {
     await env.DB.prepare(
       `INSERT OR IGNORE INTO quotes
-         (message_id, guild_id, channel_id, text, speaker, speaker_id, poster_id, poster_name, posted_at, stars, reactions, pinned)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (message_id, guild_id, channel_id, text, speaker, speaker_id, poster_id, poster_name, posted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
       .bind(
         m.id,
@@ -224,9 +220,6 @@ async function saveQuotes(env, guildId, channelId, found) {
         m.author?.id ?? null,
         authorName(m),
         new Date(m.timestamp).getTime(),
-        starCount(m),
-        reactionCount(m),
-        m.pinned ? 1 : 0,
       )
       .run();
     // Re-imports (/quotes setup) repair quotes saved before mentions were named.
@@ -244,10 +237,10 @@ async function saveQuotes(env, guildId, channelId, found) {
 const newestId = (messages) => messages.reduce((max, m) => (BigInt(m.id) > BigInt(max) ? m.id : max), "0");
 const oldestId = (messages) => messages.reduce((min, m) => (BigInt(m.id) < BigInt(min) ? m.id : min), messages[0].id);
 
-/** Read a quotes channel's newest messages, save new quotes, refresh stars, pin the best. */
+/** Read a quotes channel's newest messages and save new quotes. */
 export async function syncQuoteBook(env, book) {
   const recent = await discordApi(env, `/channels/${book.channel_id}/messages?limit=100`);
-  if (!recent.length) return { added: 0, pinned: 0 };
+  if (!recent.length) return { added: 0 };
 
   // Claim before the slow part so overlapping runs don't redo it.
   const before = book.last_message_id ?? null;
@@ -269,36 +262,7 @@ export async function syncQuoteBook(env, book) {
   }
   await fixMentionSpeakers(env, book.guild_id).catch((err) => console.warn(`Couldn't name mentioned speakers in ${book.guild_id}:`, err.message));
 
-  // Refresh reactions on recent quotes, and pin new hall-of-famers.
-  let pinned = 0;
-  const ids = recent.map((m) => m.id);
-  const { results: known } = await env.DB.prepare(
-    `SELECT message_id, stars, reactions, pinned FROM quotes WHERE message_id IN (${ids.map(() => "?").join(",")})`,
-  )
-    .bind(...ids)
-    .all();
-  const byId = new Map(recent.map((m) => [m.id, m]));
-  for (const q of known) {
-    const m = byId.get(q.message_id);
-    const stars = starCount(m);
-    const reactions = reactionCount(m);
-    let isPinned = q.pinned || m.pinned ? 1 : 0;
-    if (!isPinned && stars >= STAR_PIN_THRESHOLD) {
-      try {
-        await discordApi(env, `/channels/${book.channel_id}/messages/pins/${m.id}`, { method: "PUT" });
-        isPinned = 1;
-        pinned++;
-      } catch (err) {
-        console.warn(`Couldn't pin hall-of-fame quote ${m.id}:`, err.message);
-      }
-    }
-    if (stars !== q.stars || reactions !== q.reactions || isPinned !== q.pinned) {
-      await env.DB.prepare("UPDATE quotes SET stars = ?, reactions = ?, pinned = ? WHERE message_id = ?")
-        .bind(stars, reactions, isPinned, q.message_id)
-        .run();
-    }
-  }
-  return { added: found.length, pinned };
+  return { added: found.length };
 }
 
 /** Runs from the 5-minute cron: sync up to `limit` quote books. */
@@ -329,8 +293,7 @@ const short = (text, n) => (text.length > n ? `${text.slice(0, n - 1)}…` : tex
 export function formatQuote(q, timeZone = "America/New_York") {
   const who = q.speaker_id ? `<@${q.speaker_id}>` : q.speaker || "someone";
   const date = new Date(q.posted_at).toLocaleDateString("en-US", { timeZone, month: "short", day: "numeric", year: "numeric" });
-  const stars = q.stars ? ` ⭐ ${q.stars}` : "";
-  return `💬 "${short(q.text, 400)}" — ${who}, ${date}${stars}\nhttps://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
+  return `💬 "${short(q.text, 400)}" — ${who}, ${date}\nhttps://discord.com/channels/${q.guild_id}/${q.channel_id}/${q.message_id}`;
 }
 
 export async function quotes(interaction, env) {
@@ -372,7 +335,7 @@ export async function quotes(interaction, env) {
 
     await reply(
       `📖 The Quote Book is on for <#${channelId}>. I saved **${found.length}** quote${found.length === 1 ? "" : "s"} from the last ${history.length} messages ` +
-        `and will keep adding new ones every few minutes. Quotes with ${STAR_PIN_THRESHOLD}+ ⭐ get pinned.\nBrowse them: ${siteUrl(env, guildId)}`,
+        `and will keep adding new ones every few minutes.\nBrowse them: ${siteUrl(env, guildId)}`,
     );
     return;
   }
@@ -387,17 +350,6 @@ export async function quotes(interaction, env) {
     const book = await env.DB.prepare("SELECT * FROM quote_books WHERE guild_id = ?").bind(guildId).first();
     if (!book) throw new UserFacingError("📖 The Quote Book isn't set up yet. Someone who can manage channels can run `/quotes setup`.");
     await reply(`📖 Browse the Quote Book (sign in with Discord): ${siteUrl(env, guildId)}`);
-    return;
-  }
-
-  if (action === "top") {
-    const { results } = await env.DB.prepare(
-      "SELECT * FROM quotes WHERE guild_id = ? ORDER BY stars DESC, reactions DESC, posted_at DESC LIMIT 5",
-    )
-      .bind(guildId)
-      .all();
-    if (!results.length) throw new UserFacingError("📖 No quotes saved yet.");
-    await reply(`🏆 **Top quotes**\n${results.map((r) => formatQuote(r, timeZone)).join("\n")}`);
     return;
   }
 
