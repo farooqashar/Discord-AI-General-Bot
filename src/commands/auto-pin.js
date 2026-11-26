@@ -20,6 +20,7 @@ import {
   targetChannel,
 } from "../discord.js";
 import { formatTime, initialLastSent, isDue, localNow, parseScheduleTime } from "../schedule.js";
+import { hiddenNote, visibleRows } from "../visibility.js";
 
 const DEFAULT_TIME = "11pm";
 export const DEFAULT_MAX_PINS = 5;
@@ -176,10 +177,14 @@ export async function autoPin(interaction, env) {
 
   // list
   const { results } = await env.DB.prepare("SELECT * FROM auto_pins WHERE guild_id = ?").bind(interaction.guild_id).all();
+  // Rules are free text, so a private channel's only show up in that channel.
+  const { shown, hidden } = await visibleRows(env, interaction.guild_id, interaction.channel_id, results);
   await reply(
-    results.length
-      ? `📌 **Auto-pin**\n${results.map(describe).join("\n")}`
-      : "Auto-pin isn't set up anywhere yet. Someone who can manage channels can run `/auto-pin setup`.",
+    shown.length
+      ? `📌 **Auto-pin**\n${shown.map(describe).join("\n")}${hiddenNote(hidden, "auto-pin")}`
+      : hidden
+        ? `No auto-pins to show here.${hiddenNote(hidden, "auto-pin")}`
+        : "Auto-pin isn't set up anywhere yet. Someone who can manage channels can run `/auto-pin setup`.",
   );
 }
 

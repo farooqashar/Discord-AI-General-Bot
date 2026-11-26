@@ -308,3 +308,33 @@ test("the 5-minute trigger runs scheduled posts and nothing else", async () => {
   assert.equal(background.length, 1);
   assert.equal(calls.length, 0, "nothing due, nothing posted");
 });
+
+test("/digest list keeps a private channel's topics to that channel", async () => {
+  const db = fakeDb();
+  db.tables.digests.set("news", { channel_id: "news", guild_id: "g", topics: "NYC events", hour: 8, minute: 0 });
+  db.tables.digests.set("mods", { channel_id: "mods", guild_id: "g", topics: "ban appeals", hour: 8, minute: 0 });
+  db.tables.digests.set("staff-thread", { channel_id: "staff-thread", guild_id: "g", topics: "hiring", hour: 9, minute: 0 });
+  db.tables.digests.set("news-thread", { channel_id: "news-thread", guild_id: "g", topics: "game day", hour: 9, minute: 0 });
+  const calls = mock([
+    ["/guilds/g/channels", () => [
+      { id: "news", type: 0, permission_overwrites: [] },
+      { id: "mods", type: 0, permission_overwrites: [{ id: "g", type: 0, allow: "0", deny: READ }] },
+    ]],
+    ["/guilds/g", () => ({ id: "g", roles: [{ id: "g", permissions: READ }] })],
+    ["/channels/staff-thread", () => ({ id: "staff-thread", type: 12, parent_id: "news" })],
+    ["/channels/news-thread", () => ({ id: "news-thread", type: 11, parent_id: "news" })],
+  ]);
+  const list = (channel_id) => ({ ...interaction("digest", "list", [], "0"), channel_id });
+
+  await digest(list("general"), { DB: db });
+  assert.match(lastEdit(calls).content, /<#news> at 8am: NYC events/);
+  assert.match(lastEdit(calls).content, /game day/, "public threads follow their parent");
+  assert.doesNotMatch(lastEdit(calls).content, /ban appeals|hiring/);
+  assert.match(lastEdit(calls).content, /2 more digests are set up in channels not everyone can see/);
+
+  await digest(list("mods"), { DB: db });
+  assert.match(lastEdit(calls).content, /ban appeals/);
+  assert.match(lastEdit(calls).content, /NYC events/);
+  assert.doesNotMatch(lastEdit(calls).content, /hiring/);
+  assert.match(lastEdit(calls).content, /1 more digest is set up in a channel not everyone can see/);
+});
