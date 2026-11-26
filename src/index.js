@@ -17,7 +17,7 @@ import { eli5 } from "./commands/eli5.js";
 import { event } from "./commands/event.js";
 import { food } from "./commands/food.js";
 import { listen, pollMentions } from "./commands/listen.js";
-import { postDueReminders, remind } from "./commands/remind.js";
+import { postDueReminders, remind, reminders } from "./commands/remind.js";
 import { research } from "./commands/research.js";
 import { roast } from "./commands/roast.js";
 import { channelIsPublic, stats } from "./commands/stats.js";
@@ -60,6 +60,7 @@ export const HANDLERS = {
   catchup,
   birthday,
   countdown,
+  reminders,
   quotes,
   roast,
 };
@@ -112,6 +113,8 @@ const PRIVACY_CHECK_MS = 1500;
 export async function replyFlags(interaction, env) {
   // /catchup is only for you unless you ask to share it.
   if (interaction.data.name === "catchup" && getOption(interaction, "public") !== true) return EPHEMERAL;
+  // A reminder's text can come from a private channel.
+  if (interaction.data.name === "reminders") return EPHEMERAL;
   if (!READS_OTHER_CHANNELS.has(interaction.data.name)) return undefined;
   const channelId = getOption(interaction, "channel");
   if (!channelId || channelId === interaction.channel_id) return undefined;
