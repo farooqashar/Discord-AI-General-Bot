@@ -169,7 +169,7 @@ test("users never see the AI provider or raw error details", async () => {
     channel_id: "chan",
     data: { name: "ask", options: [{ name: "question", value: "hi" }] },
   });
-  const ts = "1";
+  const ts = String(Math.floor(Date.now() / 1000));
   const sig = Buffer.from(
     await crypto.subtle.sign("Ed25519", keys.privateKey, new TextEncoder().encode(ts + body)),
   ).toString("hex");
