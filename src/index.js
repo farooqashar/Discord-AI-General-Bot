@@ -38,6 +38,7 @@ import {
   verifyDiscordRequest,
 } from "./discord.js";
 import { registerCommands, syncCommandsIfChanged } from "./register.js";
+import { AiTimeoutError, withAiDeadline } from "./claude.js";
 
 export const HANDLERS = {
   ask,
@@ -65,14 +66,16 @@ export const HANDLERS = {
 };
 
 function friendlyError(err) {
-  if (err instanceof UserFacingError) return err.message;
-  if (err.status === 403) return "I don't have permission to do that here. Ask a server admin to check my role's permissions.";
-  return `Sorry, something went wrong. Please try again in a bit. (ref: ${errorRef(err)})`;
+  if (err instanceof UserFacingError) return `⚠️ ${err.message}`;
+  if (err instanceof AiTimeoutError) return `⏱️ That took too long. Try a shorter question or try again in a bit. (ref: ${errorRef(err)})`;
+  if (err.status === 403) return "⚠️ I don't have permission to do that here. Ask a server admin to check my role's permissions.";
+  return `⚠️ Sorry, something went wrong. Please try again in a bit. (ref: ${errorRef(err)})`;
 }
 
 /** A short, harmless hint about what failed, e.g. "discord-429", "ai-500", "limit". */
 export function errorRef(err) {
   const msg = String(err?.message ?? "");
+  if (err instanceof AiTimeoutError) return "ai-timeout";
   if (/too many subrequests/i.test(msg)) return "limit";
   if (/rate limited/i.test(msg)) return "discord-429";
   if (msg.startsWith("Discord ") && err.status) return `discord-${err.status}`;
@@ -134,14 +137,18 @@ export async function replyFlags(interaction, env) {
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
+// Cloudflare stops a command's background work about 30 seconds after the
+// "thinking…" reply, so AI calls must give up in time to report the error.
+export const COMMAND_AI_BUDGET_MS = 25_000;
+
 async function runCommand(handler, interaction, env) {
   try {
-    await handler(interaction, env);
+    await handler(interaction, withAiDeadline(env, COMMAND_AI_BUDGET_MS));
   } catch (err) {
     // Full details go to the Cloudflare logs; Discord only gets a friendly message.
     console.error(`/${interaction.data.name} failed:`, err);
     await editOriginal(env, interaction, {
-      content: `⚠️ ${friendlyError(err)}`,
+      content: friendlyError(err),
       allowed_mentions: NO_MENTIONS,
     }).catch((e) => console.error("Couldn't report the error to Discord:", e));
   }

@@ -1,4 +1,4 @@
-import { callClaude } from "../claude.js";
+import { callClaude, withAiDeadline } from "../claude.js";
 import { getOption, replyWithText } from "../discord.js";
 
 const SYSTEM = `You summarize web pages for a Discord group chat.
@@ -39,6 +39,8 @@ export async function summarize(interaction, env) {
 
   const messages = [{ role: "user", content: `Summarize this page: ${url}` }];
   let response;
+  // All rounds share one deadline, so they can't add up past it.
+  env = withAiDeadline(env);
   for (let round = 0; round < 3; round++) {
     response = await callClaude(env, {
       max_tokens: 1024,
