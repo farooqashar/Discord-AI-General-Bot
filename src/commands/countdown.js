@@ -24,6 +24,9 @@ const DAY = 24 * 60 * 60 * 1000;
 const GIVE_UP_AFTER = 60 * 60;
 const THREAD_TYPES = new Set([10, 11, 12]);
 const PRIVATE_THREAD = 12;
+// How long the channel lookups behind list and remove may take, all together,
+// before the countdowns that are still unresolved count as private.
+const VISIBILITY_TIMEOUT_MS = 5000;
 
 export async function ensureCountdownTable(env) {
   await env.DB.prepare(
@@ -114,13 +117,15 @@ async function listRows(env, guildId) {
 async function visibleRows(env, guildId, channelId) {
   const rows = await listRows(env, guildId);
   if (rows.every((r) => r.channel_id === channelId)) return rows;
+  const deadline = Date.now() + (env.visibilityTimeoutMs ?? VISIBILITY_TIMEOUT_MS);
+  const get = (path) => {
+    const timeoutMs = deadline - Date.now();
+    return timeoutMs > 0 ? discordApi(env, path, { timeoutMs }) : Promise.reject(new Error("out of time"));
+  };
   let guild;
   let channels;
   try {
-    [guild, channels] = await Promise.all([
-      discordApi(env, `/guilds/${guildId}`),
-      discordApi(env, `/guilds/${guildId}/channels`),
-    ]);
+    [guild, channels] = await Promise.all([get(`/guilds/${guildId}`), get(`/guilds/${guildId}/channels`)]);
   } catch (err) {
     console.warn("Couldn't check which countdown channels are public; showing only this channel's:", err.message);
     return rows.filter((r) => r.channel_id === channelId);
@@ -130,7 +135,7 @@ async function visibleRows(env, guildId, channelId) {
   for (const id of new Set(rows.map((r) => r.channel_id))) {
     if (publicIds.has(id)) continue;
     // The channel list leaves out threads, so look those up one by one.
-    const channel = byId.get(id) ?? (await discordApi(env, `/channels/${id}`).catch(() => null));
+    const channel = byId.get(id) ?? (await get(`/channels/${id}`).catch(() => null));
     if (!channel || channel.type === PRIVATE_THREAD) continue;
     const source = THREAD_TYPES.has(channel.type) ? byId.get(channel.parent_id) : channel;
     if (source && isPublicChannel(guild, source)) publicIds.add(id);

@@ -233,3 +233,23 @@ test("threads follow their parent channel, private threads stay private", async 
   assert.match(lastReply(calls), /Open plan/);
   assert.doesNotMatch(lastReply(calls), /Secret plan|Gone plan/);
 });
+
+test("a channel lookup that never answers counts as private instead of holding up the reply", { timeout: 2000 }, async () => {
+  const DB = fakeDb();
+  const later = (days) => Math.floor((Date.now() + days * D) / 1000);
+  DB.rows.push({ id: 1, guild_id: "g", channel_id: "general", name: "Japan trip", target_at: later(1), created_by: "me" });
+  DB.rows.push({ id: 2, guild_id: "g", channel_id: "slow-thread", name: "Slow plan", target_at: later(2), created_by: "me" });
+  const READ = String((1n << 10n) | (1n << 16n));
+  const calls = mock([
+    ["/guilds/g/channels", () => [{ id: "general", type: 0, permission_overwrites: [] }]],
+    ["/guilds/g", () => ({ id: "g", roles: [{ id: "g", permissions: READ }] })],
+  ]);
+  const mocked = globalThis.fetch;
+  globalThis.fetch = async (url, init) =>
+    String(url).endsWith("/channels/slow-thread")
+      ? new Promise((_, reject) => init.signal?.addEventListener("abort", () => reject(init.signal.reason)))
+      : mocked(url, init);
+  await countdown({ ...sub("list"), channel_id: "general" }, { DB, visibilityTimeoutMs: 50 });
+  assert.match(lastReply(calls), /Japan trip/);
+  assert.doesNotMatch(lastReply(calls), /Slow plan/);
+});
