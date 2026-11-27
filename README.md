@@ -103,11 +103,11 @@ One-time setup:
 
 ## Scheduled posts
 
-Digests and Wrapped recaps run on their own 5-minute cron trigger, separate from the every-minute one, so their requests never compete with reminders and @mentions for Cloudflare's per-run limit. Set times are rounded down to the nearest 5 minutes (11:58pm becomes 11:55pm), and posts become due at that time (Eastern, from `TIMEZONE`), once per day or period. Each run posts at most one Wrapped (it reads many channels), otherwise up to 5 digests, so when several are due at once the rest go out on the following runs, 5 or more minutes late.
+Digests, Wrapped recaps, birthday wishes, auto-pins and Quote Book syncs run on their own 5-minute cron trigger, separate from the every-minute one, so their requests never compete with reminders and @mentions for Cloudflare's per-run limit. Each run first posts at most one due Wrapped; it reads many channels, so a run that posts one does nothing else. Otherwise, in order, it posts up to 5 digests, birthday wishes for up to 5 servers, and one auto-pin, then syncs up to 2 Quote Books. Set times are rounded down to the nearest 5 minutes (11:58pm becomes 11:55pm), and posts become due at that time (Eastern, from `TIMEZONE`), once per day or period. When more are due than one run handles, the rest go out on the following runs, 5 or more minutes late.
 
 ## Using one bot channel
 
-To keep the bot in a single channel, go to Server Settings → Integrations → the bot → Channels and allow only that channel. Commands that read chat (`/ask`, `/tldr`, `/vibe-check`, `/roast`, `/stats`) take a `channel` option to read a different channel and post the result where you ran them. The bot only reads a channel if the person asking can read it too. The result is posted publicly only when everyone in the server can read that channel; for a private channel (or a thread in one), only the person who asked sees the reply. Server-wide `/stats` counts only channels everyone can read.
+To keep the bot in a single channel, go to Server Settings → Integrations → the bot → Channels and allow only that channel. Commands that read chat (`/ask`, `/tldr`, `/vibe-check`, `/roast`, `/stats`, `/auto-pin now` and `setup`, `/catchup`) take a `channel` option to read a different channel and post the result where you ran them. The bot only reads a channel if the person asking can read it too. The result is posted publicly only when everyone in the server can read that channel; for a private channel (or a thread in one), only the person who asked sees the reply. `/catchup` is private either way unless you add `public:true`. Server-wide `/stats` counts only channels everyone can read.
 
 ## Changing things
 
