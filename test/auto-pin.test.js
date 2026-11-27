@@ -199,3 +199,33 @@ test("the daily limit is adjustable, capped at 20, and passed to the AI", async 
   assert.equal((await findMatches({}, "quotes", "quotes", 99)).length, 20, "never more than 20");
   assert.equal((await findMatches({}, "quotes", "quotes", null)).length, 5, "default 5");
 });
+
+test("a private channel's auto-pin only shows up in /auto-pin list there", async () => {
+  const DB = fakeDb();
+  DB.table.set("general", { channel_id: "general", guild_id: "g", rule: "restaurant recs", hour: 23, minute: 0 });
+  DB.table.set("planning", { channel_id: "planning", guild_id: "g", rule: "Sam's surprise party", hour: 23, minute: 0 });
+  const channels = [
+    { id: "general", type: 0, permission_overwrites: [] },
+    { id: "planning", type: 0, permission_overwrites: [{ id: "g", type: 0, allow: "0", deny: READ }] },
+  ];
+  const calls = mock([
+    ["/guilds/g/channels", () => channels],
+    ["/guilds/g", () => ({ id: "g", roles: [{ id: "g", permissions: READ }] })],
+  ]);
+  const list = (channel_id) => ({ ...interaction("list", [], READ), channel_id });
+
+  await autoPin(list("general"), { DB });
+  assert.match(lastEdit(calls).content, /restaurant recs/);
+  assert.doesNotMatch(lastEdit(calls).content, /surprise|planning/);
+  assert.match(lastEdit(calls).content, /1 more auto-pin is set up in a channel not everyone can see/);
+
+  await autoPin(list("planning"), { DB });
+  assert.match(lastEdit(calls).content, /restaurant recs[^]*Sam's surprise party/);
+  assert.doesNotMatch(lastEdit(calls).content, /not everyone can see/);
+
+  // If Discord can't be reached, only this channel's auto-pin is shown.
+  const failed = mock([["/guilds/g", () => new Response("oops", { status: 500 })]]);
+  await autoPin(list("planning"), { DB });
+  assert.match(lastEdit(failed).content, /Sam's surprise party/);
+  assert.doesNotMatch(lastEdit(failed).content, /restaurant recs/);
+});

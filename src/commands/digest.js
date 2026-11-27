@@ -11,6 +11,7 @@ import {
   sendChannelMessage,
 } from "../discord.js";
 import { formatTime, initialLastSent, isDue, localNow, parseScheduleTime } from "../schedule.js";
+import { hiddenNote, visibleRows } from "../visibility.js";
 
 const MAX_BULLETS = 5;
 const DEFAULT_TIME = "8am";
@@ -114,10 +115,14 @@ export async function digest(interaction, env) {
   const { results } = await env.DB.prepare("SELECT * FROM digests WHERE guild_id = ? OR channel_id = ?")
     .bind(interaction.guild_id ?? "", interaction.channel_id)
     .all();
+  // Topics are free text, so a private channel's only show up in that channel.
+  const { shown, hidden } = await visibleRows(env, interaction.guild_id, interaction.channel_id, results);
   await reply(
-    results.length
-      ? `☀️ **Daily digests**\n${results.map((d) => `<#${d.channel_id}> at ${formatTime(d)}: ${d.topics}`).join("\n")}`
-      : "No daily digests yet. Someone who can manage channels can run `/digest setup`.",
+    shown.length
+      ? `☀️ **Daily digests**\n${shown.map((d) => `<#${d.channel_id}> at ${formatTime(d)}: ${d.topics}`).join("\n")}${hiddenNote(hidden, "digest")}`
+      : hidden
+        ? `No daily digests to show here.${hiddenNote(hidden, "digest")}`
+        : "No daily digests yet. Someone who can manage channels can run `/digest setup`.",
   );
 }
 
