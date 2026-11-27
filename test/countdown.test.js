@@ -76,10 +76,13 @@ test("adds, lists and removes countdowns", async () => {
   assert.match(lastReply(calls), /^\*\*Countdowns\*\*\n📅 \*\*Japan trip\*\*: 116 days left/);
 
   await assert.rejects(
-    countdown({ ...sub("remove", [{ name: "name", value: "japan" }]), member: { user: { id: "someone" }, permissions: "0" } }, { DB }),
+    countdown({ ...sub("remove", [{ name: "name", value: "Japan trip" }]), member: { user: { id: "someone" }, permissions: "0" } }, { DB }),
     /Only the person who started/,
   );
-  await countdown(sub("remove", [{ name: "name", value: "japan" }]), { DB });
+  // Removing needs the exact name; a partial one only gets a suggestion.
+  await assert.rejects(countdown(sub("remove", [{ name: "name", value: "japan" }]), { DB }), /Did you mean \*\*Japan trip\*\*/);
+  assert.equal(DB.rows.length, 1);
+  await countdown(sub("remove", [{ name: "name", value: "japan TRIP" }]), { DB });
   assert.equal(DB.rows.length, 0);
   await countdown(sub("list"), { DB });
   assert.match(lastReply(calls), /No countdowns yet/);
@@ -147,20 +150,31 @@ test("a private channel's countdowns only show up in that channel", async () => 
   await countdown(inChannel("planning", sub("list", [{ name: "name", value: "party" }])), { DB });
   assert.match(lastReply(calls), /Sam's surprise party/);
 
-  await assert.rejects(countdown(inChannel("general", sub("remove", [{ name: "name", value: "party" }])), { DB }), /couldn't find/);
+  await assert.rejects(countdown(inChannel("general", sub("remove", [{ name: "name", value: "Sam's surprise party" }])), { DB }), /couldn't find/);
   assert.equal(DB.rows.length, 2);
 
   // If Discord can't be reached, only this channel's countdowns are shown.
-  globalThis.fetch = async () => new Response("oops", { status: 500 });
-  await countdown(inChannel("general", sub("list")), { DB }).catch(() => {});
-  await countdown(inChannel("planning", sub("remove", [{ name: "name", value: "party" }])), { DB }).catch(() => {});
+  const replies = [];
+  globalThis.fetch = async (url, init = {}) => {
+    if (String(url).endsWith("/messages/@original")) {
+      replies.push(JSON.parse(init.body).content);
+      return Response.json({ id: "sent" });
+    }
+    return new Response("oops", { status: 500 });
+  };
+  await countdown(inChannel("general", sub("list")), { DB });
+  assert.match(replies.at(-1), /Japan trip/);
+  assert.doesNotMatch(replies.at(-1), /surprise/, "the private countdown stays hidden");
+  await countdown(inChannel("planning", sub("list")), { DB });
+  assert.match(replies.at(-1), /Sam's surprise party/);
+  assert.doesNotMatch(replies.at(-1), /Japan trip/, "only this channel's own countdowns");
+  await countdown(inChannel("planning", sub("remove", [{ name: "name", value: "Sam's surprise party" }])), { DB });
   assert.deepEqual(DB.rows.map((r) => r.name), ["Japan trip"]);
 });
 
-test("a hidden exact name never falls through to another countdown", async () => {
+test("countdowns hidden from a channel never change what it finds or removes", async () => {
   const DB = fakeDb();
   const later = (days) => Math.floor((Date.now() + days * D) / 1000);
-  DB.rows.push({ id: 1, guild_id: "g", channel_id: "planning", name: "Party", target_at: later(5), created_by: "me" });
   DB.rows.push({ id: 2, guild_id: "g", channel_id: "general", name: "Party planning", target_at: later(10), created_by: "me" });
   const READ = String((1n << 10n) | (1n << 16n));
   const calls = mock([
@@ -176,13 +190,24 @@ test("a hidden exact name never falls through to another countdown", async () =>
   const inChannel = (channel_id, interaction) => ({ ...interaction, channel_id });
   const party = [{ name: "name", value: "Party" }];
 
-  await assert.rejects(countdown(inChannel("general", sub("remove", party)), { DB }), /couldn't find/);
-  await assert.rejects(countdown(inChannel("general", sub("list", party)), { DB }), /couldn't find/);
-  assert.deepEqual(DB.rows.map((r) => r.name), ["Party", "Party planning"], "nothing removed from outside the channel");
+  // What #general sees, with and without a private "Party" in #planning.
+  const seen = async () => {
+    await countdown(inChannel("general", sub("list", party)), { DB });
+    const listed = lastReply(calls);
+    const removed = await countdown(inChannel("general", sub("remove", party)), { DB }).then(
+      () => "removed",
+      (err) => err.message,
+    );
+    return { listed, removed };
+  };
+  const without = await seen();
+  DB.rows.push({ id: 1, guild_id: "g", channel_id: "planning", name: "Party", target_at: later(5), created_by: "me" });
+  const withHidden = await seen();
 
-  // A partial name still works when no countdown has that exact name.
-  await countdown(inChannel("general", sub("list", [{ name: "name", value: "planning" }])), { DB });
-  assert.match(lastReply(calls), /Party planning/);
+  assert.deepEqual(withHidden, without, "a hidden countdown leaves no trace in #general");
+  assert.match(without.listed, /Party planning/);
+  assert.match(without.removed, /Did you mean \*\*Party planning\*\*/, "a partial name never removes anything");
+  assert.deepEqual(DB.rows.map((r) => r.name).sort(), ["Party", "Party planning"], "nothing removed from outside the channel");
 
   await countdown(inChannel("planning", sub("remove", party)), { DB });
   assert.deepEqual(DB.rows.map((r) => r.name), ["Party planning"], "the exact match is removed where it's visible");

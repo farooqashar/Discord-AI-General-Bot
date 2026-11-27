@@ -111,8 +111,8 @@ async function listRows(env, guildId) {
  * counts as private, so a private channel's countdown never shows up in
  * another channel.
  */
-async function visibleRows(env, guildId, channelId, rows) {
-  rows ??= await listRows(env, guildId);
+async function visibleRows(env, guildId, channelId) {
+  const rows = await listRows(env, guildId);
   if (rows.every((r) => r.channel_id === channelId)) return rows;
   let guild;
   let channels;
@@ -138,16 +138,20 @@ async function visibleRows(env, guildId, channelId, rows) {
   return rows.filter((r) => publicIds.has(r.channel_id));
 }
 
+/**
+ * Finds a countdown by name among the ones visible from `channelId`, an exact
+ * name first, then one that contains the name. Countdowns hidden from here are
+ * never consulted, so the answer is the same whether or not they exist.
+ */
 async function findByName(env, guildId, channelId, name) {
-  const all = await listRows(env, guildId);
-  const rows = await visibleRows(env, guildId, channelId, all);
+  const rows = await visibleRows(env, guildId, channelId);
   const wanted = String(name ?? "").trim().toLowerCase();
-  const exact = (r) => r.name.toLowerCase() === wanted;
-  // An exact name that's hidden from here never falls through to a partial
-  // match, so removing "Party" can't delete a visible "Party planning".
-  if (all.some(exact)) return rows.find(exact) ?? null;
-  return rows.find((r) => r.name.toLowerCase().includes(wanted));
+  if (!wanted) return { rows };
+  const exact = rows.find((r) => r.name.toLowerCase() === wanted);
+  return { rows, exact, partial: exact ?? rows.find((r) => r.name.toLowerCase().includes(wanted)) };
 }
+
+const NOT_FOUND = "I couldn't find a countdown with that name. See them all with `/countdown list`.";
 
 export async function countdown(interaction, env) {
   if (!interaction.guild_id) throw new UserFacingError("Countdowns only work inside a server.");
@@ -179,8 +183,13 @@ export async function countdown(interaction, env) {
   }
 
   if (action === "remove") {
-    const row = await findByName(env, guildId, interaction.channel_id, getOption(interaction, "name"));
-    if (!row) throw new UserFacingError("I couldn't find a countdown with that name. See them all with `/countdown list`.");
+    // Removing needs the exact name, so a partial one can't delete a different
+    // countdown than the one meant. A close match is only suggested.
+    const { exact: row, partial } = await findByName(env, guildId, interaction.channel_id, getOption(interaction, "name"));
+    if (!row) {
+      if (partial) throw new UserFacingError(`I couldn't find a countdown with that exact name. Did you mean **${partial.name}**?`);
+      throw new UserFacingError(NOT_FOUND);
+    }
     if (row.created_by !== me.id && !canManageChannels(interaction)) {
       throw new UserFacingError("🔒 Only the person who started a countdown, or someone who can manage channels, can remove it.");
     }
@@ -192,8 +201,8 @@ export async function countdown(interaction, env) {
   // list (also shows one countdown when a name is given)
   const name = getOption(interaction, "name");
   if (name) {
-    const row = await findByName(env, guildId, interaction.channel_id, name);
-    if (!row) throw new UserFacingError("I couldn't find a countdown with that name. See them all with `/countdown list`.");
+    const { partial: row } = await findByName(env, guildId, interaction.channel_id, name);
+    if (!row) throw new UserFacingError(NOT_FOUND);
     await reply(countdownLine(row));
     return;
   }
