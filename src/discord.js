@@ -30,15 +30,26 @@ function hexToBytes(hex) {
 let cachedKey;
 let cachedKeyHex;
 
+// A signed request older than this (or this far ahead, allowing for clock
+// skew) is refused, so a copied request can't be replayed later.
+export const MAX_SIGNATURE_AGE_SECONDS = 300;
+const MAX_SIGNATURE_SKEW_SECONDS = 60;
+
 /**
  * Discord signs every interaction request. We must check the signature,
  * or Discord refuses to save our endpoint URL (and anyone could call it).
+ * We also refuse stale timestamps, so an old signed request can't be replayed.
  */
 export async function verifyDiscordRequest(request, publicKeyHex) {
   const signature = request.headers.get("X-Signature-Ed25519");
   const timestamp = request.headers.get("X-Signature-Timestamp");
   const body = await request.text();
   if (!signature || !timestamp || !publicKeyHex) return { valid: false, body };
+  if (!/^\d+$/.test(timestamp)) return { valid: false, body };
+  const ageSeconds = Date.now() / 1000 - Number(timestamp);
+  if (ageSeconds > MAX_SIGNATURE_AGE_SECONDS || ageSeconds < -MAX_SIGNATURE_SKEW_SECONDS) {
+    return { valid: false, body };
+  }
 
   try {
     if (!cachedKey || cachedKeyHex !== publicKeyHex) {
