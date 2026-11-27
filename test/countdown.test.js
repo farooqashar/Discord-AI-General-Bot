@@ -157,6 +157,37 @@ test("a private channel's countdowns only show up in that channel", async () => 
   assert.deepEqual(DB.rows.map((r) => r.name), ["Japan trip"]);
 });
 
+test("a hidden exact name never falls through to another countdown", async () => {
+  const DB = fakeDb();
+  const later = (days) => Math.floor((Date.now() + days * D) / 1000);
+  DB.rows.push({ id: 1, guild_id: "g", channel_id: "planning", name: "Party", target_at: later(5), created_by: "me" });
+  DB.rows.push({ id: 2, guild_id: "g", channel_id: "general", name: "Party planning", target_at: later(10), created_by: "me" });
+  const READ = String((1n << 10n) | (1n << 16n));
+  const calls = mock([
+    [
+      "/guilds/g/channels",
+      () => [
+        { id: "general", type: 0, permission_overwrites: [] },
+        { id: "planning", type: 0, permission_overwrites: [{ id: "g", type: 0, allow: "0", deny: READ }] },
+      ],
+    ],
+    ["/guilds/g", () => ({ id: "g", roles: [{ id: "g", permissions: READ }] })],
+  ]);
+  const inChannel = (channel_id, interaction) => ({ ...interaction, channel_id });
+  const party = [{ name: "name", value: "Party" }];
+
+  await assert.rejects(countdown(inChannel("general", sub("remove", party)), { DB }), /couldn't find/);
+  await assert.rejects(countdown(inChannel("general", sub("list", party)), { DB }), /couldn't find/);
+  assert.deepEqual(DB.rows.map((r) => r.name), ["Party", "Party planning"], "nothing removed from outside the channel");
+
+  // A partial name still works when no countdown has that exact name.
+  await countdown(inChannel("general", sub("list", [{ name: "name", value: "planning" }])), { DB });
+  assert.match(lastReply(calls), /Party planning/);
+
+  await countdown(inChannel("planning", sub("remove", party)), { DB });
+  assert.deepEqual(DB.rows.map((r) => r.name), ["Party planning"], "the exact match is removed where it's visible");
+});
+
 test("threads follow their parent channel, private threads stay private", async () => {
   const DB = fakeDb();
   const later = (days) => Math.floor((Date.now() + days * D) / 1000);

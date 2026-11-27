@@ -111,8 +111,8 @@ async function listRows(env, guildId) {
  * counts as private, so a private channel's countdown never shows up in
  * another channel.
  */
-async function visibleRows(env, guildId, channelId) {
-  const rows = await listRows(env, guildId);
+async function visibleRows(env, guildId, channelId, rows) {
+  rows ??= await listRows(env, guildId);
   if (rows.every((r) => r.channel_id === channelId)) return rows;
   let guild;
   let channels;
@@ -139,9 +139,14 @@ async function visibleRows(env, guildId, channelId) {
 }
 
 async function findByName(env, guildId, channelId, name) {
-  const rows = await visibleRows(env, guildId, channelId);
+  const all = await listRows(env, guildId);
+  const rows = await visibleRows(env, guildId, channelId, all);
   const wanted = String(name ?? "").trim().toLowerCase();
-  return rows.find((r) => r.name.toLowerCase() === wanted) ?? rows.find((r) => r.name.toLowerCase().includes(wanted));
+  const exact = (r) => r.name.toLowerCase() === wanted;
+  // An exact name that's hidden from here never falls through to a partial
+  // match, so removing "Party" can't delete a visible "Party planning".
+  if (all.some(exact)) return rows.find(exact) ?? null;
+  return rows.find((r) => r.name.toLowerCase().includes(wanted));
 }
 
 export async function countdown(interaction, env) {
