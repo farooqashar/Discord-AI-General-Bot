@@ -6,6 +6,7 @@ import {
   NO_MENTIONS,
   UserFacingError,
   canManageChannels,
+  discordApi,
   discordTimestamp,
   editOriginal,
   getOption,
@@ -13,6 +14,7 @@ import {
   invokingUser,
   sendChannelMessage,
 } from "../discord.js";
+import { isPublicChannel } from "./stats.js";
 
 const MAX_PER_SERVER = 25;
 const MAX_AHEAD = 5 * 366 * 24 * 60 * 60 * 1000; // about 5 years
@@ -20,6 +22,11 @@ const DAY = 24 * 60 * 60 * 1000;
 // An alert that keeps failing for a passing reason is retried each minute
 // until it is this late, then dropped.
 const GIVE_UP_AFTER = 60 * 60;
+const THREAD_TYPES = new Set([10, 11, 12]);
+const PRIVATE_THREAD = 12;
+// How long the channel lookups behind list and remove may take, all together,
+// before the countdowns that are still unresolved count as private.
+const VISIBILITY_TIMEOUT_MS = 5000;
 
 export async function ensureCountdownTable(env) {
   await env.DB.prepare(
@@ -100,11 +107,56 @@ async function listRows(env, guildId) {
   return results;
 }
 
-async function findByName(env, guildId, name) {
+/**
+ * The countdowns that can be shown in `channelId`: its own, plus ones from
+ * channels everyone in the server can read. Threads follow their parent,
+ * private threads are private, and a channel that's gone or can't be read
+ * counts as private, so a private channel's countdown never shows up in
+ * another channel.
+ */
+async function visibleRows(env, guildId, channelId) {
   const rows = await listRows(env, guildId);
-  const wanted = String(name ?? "").trim().toLowerCase();
-  return rows.find((r) => r.name.toLowerCase() === wanted) ?? rows.find((r) => r.name.toLowerCase().includes(wanted));
+  if (rows.every((r) => r.channel_id === channelId)) return rows;
+  const deadline = Date.now() + (env.visibilityTimeoutMs ?? VISIBILITY_TIMEOUT_MS);
+  const get = (path) => {
+    const timeoutMs = deadline - Date.now();
+    return timeoutMs > 0 ? discordApi(env, path, { timeoutMs }) : Promise.reject(new Error("out of time"));
+  };
+  let guild;
+  let channels;
+  try {
+    [guild, channels] = await Promise.all([get(`/guilds/${guildId}`), get(`/guilds/${guildId}/channels`)]);
+  } catch (err) {
+    console.warn("Couldn't check which countdown channels are public; showing only this channel's:", err.message);
+    return rows.filter((r) => r.channel_id === channelId);
+  }
+  const byId = new Map(channels.map((c) => [c.id, c]));
+  const publicIds = new Set([channelId]);
+  for (const id of new Set(rows.map((r) => r.channel_id))) {
+    if (publicIds.has(id)) continue;
+    // The channel list leaves out threads, so look those up one by one.
+    const channel = byId.get(id) ?? (await get(`/channels/${id}`).catch(() => null));
+    if (!channel || channel.type === PRIVATE_THREAD) continue;
+    const source = THREAD_TYPES.has(channel.type) ? byId.get(channel.parent_id) : channel;
+    if (source && isPublicChannel(guild, source)) publicIds.add(id);
+  }
+  return rows.filter((r) => publicIds.has(r.channel_id));
 }
+
+/**
+ * Finds a countdown by name among the ones visible from `channelId`, an exact
+ * name first, then one that contains the name. Countdowns hidden from here are
+ * never consulted, so the answer is the same whether or not they exist.
+ */
+async function findByName(env, guildId, channelId, name) {
+  const rows = await visibleRows(env, guildId, channelId);
+  const wanted = String(name ?? "").trim().toLowerCase();
+  if (!wanted) return { rows };
+  const exact = rows.find((r) => r.name.toLowerCase() === wanted);
+  return { rows, exact, partial: exact ?? rows.find((r) => r.name.toLowerCase().includes(wanted)) };
+}
+
+const NOT_FOUND = "I couldn't find a countdown with that name. See them all with `/countdown list`.";
 
 export async function countdown(interaction, env) {
   if (!interaction.guild_id) throw new UserFacingError("Countdowns only work inside a server.");
@@ -136,8 +188,13 @@ export async function countdown(interaction, env) {
   }
 
   if (action === "remove") {
-    const row = await findByName(env, guildId, getOption(interaction, "name"));
-    if (!row) throw new UserFacingError("I couldn't find a countdown with that name. See them all with `/countdown list`.");
+    // Removing needs the exact name, so a partial one can't delete a different
+    // countdown than the one meant. A close match is only suggested.
+    const { exact: row, partial } = await findByName(env, guildId, interaction.channel_id, getOption(interaction, "name"));
+    if (!row) {
+      if (partial) throw new UserFacingError(`I couldn't find a countdown with that exact name. Did you mean **${partial.name}**?`);
+      throw new UserFacingError(NOT_FOUND);
+    }
     if (row.created_by !== me.id && !canManageChannels(interaction)) {
       throw new UserFacingError("🔒 Only the person who started a countdown, or someone who can manage channels, can remove it.");
     }
@@ -149,12 +206,12 @@ export async function countdown(interaction, env) {
   // list (also shows one countdown when a name is given)
   const name = getOption(interaction, "name");
   if (name) {
-    const row = await findByName(env, guildId, name);
-    if (!row) throw new UserFacingError("I couldn't find a countdown with that name. See them all with `/countdown list`.");
+    const { partial: row } = await findByName(env, guildId, interaction.channel_id, name);
+    if (!row) throw new UserFacingError(NOT_FOUND);
     await reply(countdownLine(row));
     return;
   }
-  const rows = await listRows(env, guildId);
+  const rows = await visibleRows(env, guildId, interaction.channel_id);
   if (!rows.length) {
     await reply('No countdowns yet. Start one with `/countdown add name:"Japan trip" when:"March 14"`.');
     return;
