@@ -136,6 +136,53 @@ test("findPlace uses the state or country to pick the right town", async () => {
   assert.equal((await findPlace("Huntington")).admin1, "West Virginia", "biggest wins with no qualifier");
 });
 
+const LONDON = {
+  results: [
+    { name: "London", admin1: "England", admin2: "Greater London", country: "United Kingdom", country_code: "GB", population: 8961989 },
+    { name: "London", admin1: "Ontario", admin2: "Middlesex County", country: "Canada", country_code: "CA", population: 422324 },
+    { name: "London", admin1: "Kentucky", admin2: "Laurel County", country: "United States", country_code: "US", population: 8126 },
+  ],
+};
+
+const KINGSTON = {
+  results: [
+    { name: "Kingston", admin1: "Kingston", country: "Jamaica", country_code: "JM", population: 937700 },
+    { name: "Kingston", admin1: "Ontario", admin2: "Frontenac County", country: "Canada", country_code: "CA", population: 132485 },
+    { name: "Kingston", admin1: "New York", admin2: "Ulster County", country: "United States", country_code: "US", population: 23893 },
+  ],
+};
+
+test("findPlace matches a province or state code as a whole value, not a substring", async () => {
+  mock([["geocoding-api", (url) => (String(url).includes("name=London") ? LONDON : KINGSTON)]]);
+  assert.equal((await findPlace("London, ON")).admin1, "Ontario");
+  assert.equal((await findPlace("London, Ontario")).admin1, "Ontario");
+  assert.equal((await findPlace("London, KY")).admin1, "Kentucky");
+  // Each partial below would pick a different place if matching were skipped, so the population fallback can't pass them.
+  assert.equal((await findPlace("London, Onta")).admin1, "Ontario", "long qualifiers match the start of a word");
+  assert.equal((await findPlace("London, Laurel")).admin1, "Kentucky", "long qualifiers match the start of a later word");
+  assert.equal((await findPlace("Kingston, ON")).admin1, "Ontario");
+  assert.equal((await findPlace("Kingston, NY")).admin1, "New York");
+  assert.equal((await findPlace("Kingston, Can")).country_code, "JM", "short partials fall back to the biggest");
+  assert.equal((await findPlace("Kingston, Nowhere")).country_code, "JM", "no match falls back to the biggest");
+});
+
+const RICHMOND = {
+  results: [
+    { name: "Richmond", admin1: "Virginia", country: "United States", country_code: "US", population: 226610 },
+    { name: "Richmond", admin1: "KwaZulu-Natal", admin2: "uMkhambathini", country: "South Africa", country_code: "ZA", population: 12000 },
+    { name: "Richmond", admin1: "Québec", admin2: "Le Val-Saint-François", country: "Canada", country_code: "CA", population: 3300 },
+  ],
+};
+
+test("findPlace treats hyphens and other non-letters as word breaks", async () => {
+  mock([["geocoding-api", () => RICHMOND]]);
+  assert.equal((await findPlace("Richmond, Natal")).country_code, "ZA", "a word after a hyphen");
+  assert.equal((await findPlace("Richmond, Saint-Fran")).country_code, "CA", "a hyphenated qualifier");
+  assert.equal((await findPlace("Richmond, Fran")).country_code, "CA");
+  assert.equal((await findPlace("Richmond, atal")).country_code, "US", "the middle of a word still doesn't count");
+  assert.equal((await findPlace("Richmond, ebec")).country_code, "US", "an accented letter is not a word break");
+});
+
 const FORECAST = {
   current: { temperature_2m: 51.6, apparent_temperature: 47.2, weather_code: 2, wind_speed_10m: 9.4, relative_humidity_2m: 61, is_day: 1 },
   daily: {
