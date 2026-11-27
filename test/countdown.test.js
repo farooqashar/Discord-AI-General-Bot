@@ -249,7 +249,14 @@ test("a channel lookup that never answers counts as private instead of holding u
     String(url).endsWith("/channels/slow-thread")
       ? new Promise((_, reject) => init.signal?.addEventListener("abort", () => reject(init.signal.reason)))
       : mocked(url, init);
-  await countdown({ ...sub("list"), channel_id: "general" }, { DB, visibilityTimeoutMs: 50 });
+  // Node doesn't let AbortSignal.timeout's timer keep a test alive, so hold the
+  // event loop open until the lookup gives up.
+  const keepAlive = setTimeout(() => {}, 2000);
+  try {
+    await countdown({ ...sub("list"), channel_id: "general" }, { DB, visibilityTimeoutMs: 50 });
+  } finally {
+    clearTimeout(keepAlive);
+  }
   assert.match(lastReply(calls), /Japan trip/);
   assert.doesNotMatch(lastReply(calls), /Slow plan/);
 });
