@@ -17,6 +17,13 @@ const US_STATES = {
   VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
 };
 
+// None of these codes clash with a US state code.
+const CA_PROVINCES = {
+  AB: "Alberta", BC: "British Columbia", MB: "Manitoba", NB: "New Brunswick", NL: "Newfoundland and Labrador",
+  NS: "Nova Scotia", NT: "Northwest Territories", NU: "Nunavut", ON: "Ontario", PE: "Prince Edward Island",
+  QC: "Quebec", SK: "Saskatchewan", YT: "Yukon",
+};
+
 // WMO weather codes → [label, emoji]
 const CONDITIONS = {
   0: ["Clear", "☀️"],
@@ -54,10 +61,17 @@ export function describe(code, isDay = true) {
   return { label, emoji: code === 0 && !isDay ? "🌙" : code === 1 && !isDay ? "🌙" : emoji };
 }
 
+const WEATHER_TIMEOUT_MS = 8000;
+
 async function getJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Weather service error (${res.status})`);
-  return res.json();
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`Weather service error (${res.status})`);
+    return await res.json();
+  } catch (err) {
+    if (err?.name === "TimeoutError") throw new Error("Weather service timed out");
+    throw err;
+  }
 }
 
 /**
@@ -69,7 +83,8 @@ export async function findPlace(query) {
   const [namePart, ...rest] = query.split(",").map((s) => s.trim()).filter(Boolean);
   if (!namePart) return null;
   const qualifier = rest.join(", ").toLowerCase();
-  const stateName = US_STATES[qualifier.toUpperCase()]?.toLowerCase();
+  const code = qualifier.toUpperCase();
+  const regionName = (US_STATES[code] ?? CA_PROVINCES[code])?.toLowerCase();
 
   const params = new URLSearchParams({ name: namePart, count: "10", language: "en", format: "json" });
   const data = await getJson(`${GEOCODE_URL}?${params}`);
@@ -79,12 +94,23 @@ export async function findPlace(query) {
   const matches = qualifier
     ? results.filter((r) => {
         const fields = [r.admin1, r.admin2, r.country, r.country_code].filter(Boolean).map((f) => f.toLowerCase());
-        return fields.some((f) => f === qualifier || f === stateName || f.includes(qualifier));
+        return fields.some((f) => f === qualifier || f === regionName || startsWord(f, qualifier));
       })
     : results;
   const pool = matches.length ? matches : results;
   // Prefer the biggest place with that name, e.g. New York City over a small town.
   return [...pool].sort((a, b) => (b.population ?? 0) - (a.population ?? 0))[0];
+}
+
+// "Tokyo, Jap" still finds Japan, but short qualifiers must match whole values:
+// "on" is not a match for "Greater London" or "Kingston". A word starts at the
+// beginning or after any non-letter, so "Natal" finds "KwaZulu-Natal".
+function startsWord(field, qualifier) {
+  if (qualifier.length < 4) return false;
+  for (let i = field.indexOf(qualifier); i !== -1; i = field.indexOf(qualifier, i + 1)) {
+    if (i === 0 || !/[\p{L}\p{M}\p{N}]/u.test(field[i - 1])) return true;
+  }
+  return false;
 }
 
 export function placeLabel(place) {

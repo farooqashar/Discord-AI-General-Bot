@@ -23,6 +23,7 @@ A small Discord bot with Claude-powered slash commands. It runs on Cloudflare Wo
 | `/catchup [channel] [public]` | What you missed since your last message in a channel (or the last 24 hours): a short summary plus links to anything that mentions, replies to or asks you something. Only you see it unless `public:true`, and it always stays private for private channels. |
 | `/birthday set/remove/list/channel` | Save birthdays (month and day only). On the day, the bot posts a short wish in the chosen channel and pings the birthday person. Setting someone else's birthday or the channel needs Manage Channels. |
 | `/countdown add/list/remove` | Count down to a date ("Japan trip", "March 14"). Shows days left, or hours, minutes and seconds on the last day, with a live Discord timer. When it hits zero, the bot posts an alert in the channel where it was started. Anyone can remove their own; Manage Channels can remove any. Up to 25 per server, 5 years ahead. |
+| `/reminders list/cancel` | Your own pending reminders, soonest first, each with its number, channel, time and message. `cancel id:<number>` deletes one of yours. Only you see the reply. Each person can have up to 25 pending reminders. |
 | `/quotes random/site/setup/off` | The Quote Book. `/quotes setup channel:#quotes` (Manage Channels; the channel must be one everyone can see) imports the channel's quotes and keeps saving new ones every 5 minutes. `random` pulls one (optionally `from` someone or matching `search`), `site` links the members-only website. |
 | `/listen [on/off/status]` | Turns on @mention replies in a channel (admins only). The bot then answers anyone who @mentions it or replies to its messages there, within about a minute. |
 | `/roast @user [heat] [channel]` | Roasts someone based on their recent messages. Heat: mild, spicy (default) or savage. |
@@ -102,11 +103,11 @@ One-time setup:
 
 ## Scheduled posts
 
-Digests and Wrapped recaps run on their own 5-minute cron trigger, separate from the every-minute one, so their requests never compete with reminders and @mentions for Cloudflare's per-run limit. Set times are rounded down to the nearest 5 minutes (11:58pm becomes 11:55pm), and posts become due at that time (Eastern, from `TIMEZONE`), once per day or period. Each run posts at most one Wrapped (it reads many channels), otherwise up to 5 digests, so when several are due at once the rest go out on the following runs, 5 or more minutes late.
+Digests, Wrapped recaps, birthday wishes, auto-pins and Quote Book syncs run on their own 5-minute cron trigger, separate from the every-minute one, so their requests never compete with reminders and @mentions for Cloudflare's per-run limit. Each run first posts at most one due Wrapped; it reads many channels, so a run that posts one does nothing else. Otherwise, in order, it posts up to 5 digests, birthday wishes for up to 5 servers, and one auto-pin, then syncs up to 2 Quote Books. Set times are rounded down to the nearest 5 minutes (11:58pm becomes 11:55pm), and posts become due at that time (Eastern, from `TIMEZONE`), once per day or period. When more are due than one run handles, the rest go out on the following runs, 5 or more minutes late.
 
 ## Using one bot channel
 
-To keep the bot in a single channel, go to Server Settings → Integrations → the bot → Channels and allow only that channel. Commands that read chat (`/ask`, `/tldr`, `/vibe-check`, `/roast`, `/stats`) take a `channel` option to read a different channel and post the result where you ran them. The bot only reads a channel if the person asking can read it too. The result is posted publicly only when everyone in the server can read that channel; for a private channel (or a thread in one), only the person who asked sees the reply. Server-wide `/stats` counts only channels everyone can read.
+To keep the bot in a single channel, go to Server Settings → Integrations → the bot → Channels and allow only that channel. Commands that read chat (`/ask`, `/tldr`, `/vibe-check`, `/roast`, `/stats`, `/auto-pin now` and `setup`, `/catchup`) take a `channel` option to read a different channel and post the result where you ran them. The bot only reads a channel if the person asking can read it too. The result is posted publicly only when everyone in the server can read that channel; for a private channel (or a thread in one), only the person who asked sees the reply. `/catchup` is private either way unless you add `public:true`. Server-wide `/stats` counts only channels everyone can read.
 
 ## Changing things
 
@@ -120,7 +121,7 @@ To keep the bot in a single channel, go to Server Settings → Integrations → 
 
 - **Cloudflare:** the free plan covers this easily (100,000 requests a day, plus D1 and cron triggers).
 - **Anthropic:** pay as you go. `/research` and `/food` also pay a per-search fee (1¢ each), capped at 4 and 3 searches per run. Set a monthly spend limit in the Anthropic Console.
-- **Research time:** background work on Workers gets about 30 seconds after the "thinking…" reply. A capped research run normally fits; if very long questions get cut off, move `/research` to a Cloudflare Workflow.
+- **Research time:** background work on Workers gets about 30 seconds after the "thinking…" reply. A capped research run normally fits. Slash commands give the AI about 25 seconds in total, then reply "⏱️ That took too long…" instead of hanging; if that happens often, move `/research` to a Cloudflare Workflow. Scheduled jobs give each AI call up to 60 seconds, then log it and move on.
 - **Message length:** Discord messages max out at 2,000 characters, so long answers are split across several messages.
 - **@mentions:** the bot doesn't stay connected to Discord, so it answers @mentions only in channels turned on with `/listen`, and up to about a minute late (see [@mentions](#mentions)).
 
