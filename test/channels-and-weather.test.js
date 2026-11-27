@@ -157,11 +157,30 @@ test("findPlace matches a province or state code as a whole value, not a substri
   assert.equal((await findPlace("London, ON")).admin1, "Ontario");
   assert.equal((await findPlace("London, Ontario")).admin1, "Ontario");
   assert.equal((await findPlace("London, KY")).admin1, "Kentucky");
-  assert.equal((await findPlace("London, Lond")).country_code, "GB", "long qualifiers match the start of a word");
+  // Each partial below would pick a different place if matching were skipped, so the population fallback can't pass them.
+  assert.equal((await findPlace("London, Onta")).admin1, "Ontario", "long qualifiers match the start of a word");
+  assert.equal((await findPlace("London, Laurel")).admin1, "Kentucky", "long qualifiers match the start of a later word");
   assert.equal((await findPlace("Kingston, ON")).admin1, "Ontario");
   assert.equal((await findPlace("Kingston, NY")).admin1, "New York");
-  assert.equal((await findPlace("Kingston, Jam")).country_code, "JM", "short partials fall back to the biggest");
+  assert.equal((await findPlace("Kingston, Can")).country_code, "JM", "short partials fall back to the biggest");
   assert.equal((await findPlace("Kingston, Nowhere")).country_code, "JM", "no match falls back to the biggest");
+});
+
+const RICHMOND = {
+  results: [
+    { name: "Richmond", admin1: "Virginia", country: "United States", country_code: "US", population: 226610 },
+    { name: "Richmond", admin1: "KwaZulu-Natal", admin2: "uMkhambathini", country: "South Africa", country_code: "ZA", population: 12000 },
+    { name: "Richmond", admin1: "Québec", admin2: "Le Val-Saint-François", country: "Canada", country_code: "CA", population: 3300 },
+  ],
+};
+
+test("findPlace treats hyphens and other non-letters as word breaks", async () => {
+  mock([["geocoding-api", () => RICHMOND]]);
+  assert.equal((await findPlace("Richmond, Natal")).country_code, "ZA", "a word after a hyphen");
+  assert.equal((await findPlace("Richmond, Saint-Fran")).country_code, "CA", "a hyphenated qualifier");
+  assert.equal((await findPlace("Richmond, Fran")).country_code, "CA");
+  assert.equal((await findPlace("Richmond, atal")).country_code, "US", "the middle of a word still doesn't count");
+  assert.equal((await findPlace("Richmond, ebec")).country_code, "US", "an accented letter is not a word break");
 });
 
 const FORECAST = {

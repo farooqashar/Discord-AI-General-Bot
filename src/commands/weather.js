@@ -96,9 +96,14 @@ export async function findPlace(query) {
 }
 
 // "Tokyo, Jap" still finds Japan, but short qualifiers must match whole values:
-// "on" is not a match for "Greater London" or "Kingston".
+// "on" is not a match for "Greater London" or "Kingston". A word starts at the
+// beginning or after any non-letter, so "Natal" finds "KwaZulu-Natal".
 function startsWord(field, qualifier) {
-  return qualifier.length >= 4 && ` ${field}`.includes(` ${qualifier}`);
+  if (qualifier.length < 4) return false;
+  for (let i = field.indexOf(qualifier); i !== -1; i = field.indexOf(qualifier, i + 1)) {
+    if (i === 0 || !/[\p{L}\p{M}\p{N}]/u.test(field[i - 1])) return true;
+  }
+  return false;
 }
 
 export function placeLabel(place) {
