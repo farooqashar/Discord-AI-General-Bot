@@ -54,10 +54,17 @@ export function describe(code, isDay = true) {
   return { label, emoji: code === 0 && !isDay ? "🌙" : code === 1 && !isDay ? "🌙" : emoji };
 }
 
+const WEATHER_TIMEOUT_MS = 8000;
+
 async function getJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Weather service error (${res.status})`);
-  return res.json();
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(WEATHER_TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`Weather service error (${res.status})`);
+    return await res.json();
+  } catch (err) {
+    if (err?.name === "TimeoutError") throw new Error("Weather service timed out");
+    throw err;
+  }
 }
 
 /**

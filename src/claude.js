@@ -44,21 +44,47 @@ export function buildRequest(env, body) {
   return request;
 }
 
+// A hung AI call has to fail while there's still time to say so. Slash
+// commands share one deadline (`env.aiDeadline`, set by runCommand); other
+// work, like the cron jobs, gets this long per call (or `env.aiTimeoutMs`).
+export const AI_TIMEOUT_MS = 60_000;
+
+export class AiTimeoutError extends Error {
+  name = "AiTimeoutError";
+}
+
+/**
+ * A copy of env whose AI calls must all finish within `ms` from now, or by
+ * the earlier deadline it already has. Lets several calls share one budget.
+ */
+export function withAiDeadline(env, ms = env.aiTimeoutMs ?? AI_TIMEOUT_MS) {
+  return { ...env, aiDeadline: Math.min(env.aiDeadline ?? Infinity, Date.now() + ms) };
+}
+
 export async function callClaude(env, body) {
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": API_VERSION,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(buildRequest(env, body)),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`AI request failed (${res.status}): ${text.slice(0, 300)}`);
+  const timeoutMs = Math.min(env.aiTimeoutMs ?? AI_TIMEOUT_MS, (env.aiDeadline ?? Infinity) - Date.now());
+  if (timeoutMs <= 0) throw new AiTimeoutError("AI request timed out before it started");
+  let message;
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": API_VERSION,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(buildRequest(env, body)),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`AI request failed (${res.status}): ${text.slice(0, 300)}`);
+    }
+    message = await res.json();
+  } catch (err) {
+    if (err?.name === "TimeoutError") throw new AiTimeoutError(`AI request timed out after ${Math.round(timeoutMs)}ms`);
+    throw err;
   }
-  const message = await res.json();
   if (message.stop_reason === "refusal") {
     throw new UserFacingError("I can't help with that one.");
   }
@@ -131,6 +157,8 @@ export async function webSearch(env, { system, prompt, maxSearches = 4, maxToken
 
   const messages = [{ role: "user", content: prompt }];
   let response;
+  // All rounds share one deadline, so they can't add up past it.
+  env = withAiDeadline(env);
   // Long searches can come back as "pause_turn"; send the partial answer
   // back unchanged so Claude can continue where it left off.
   for (let round = 0; round < 3; round++) {

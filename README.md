@@ -121,7 +121,7 @@ To keep the bot in a single channel, go to Server Settings → Integrations → 
 
 - **Cloudflare:** the free plan covers this easily (100,000 requests a day, plus D1 and cron triggers).
 - **Anthropic:** pay as you go. `/research` and `/food` also pay a per-search fee (1¢ each), capped at 4 and 3 searches per run. Set a monthly spend limit in the Anthropic Console.
-- **Research time:** background work on Workers gets about 30 seconds after the "thinking…" reply. A capped research run normally fits; if very long questions get cut off, move `/research` to a Cloudflare Workflow.
+- **Research time:** background work on Workers gets about 30 seconds after the "thinking…" reply. A capped research run normally fits. Slash commands give the AI about 25 seconds in total, then reply "⏱️ That took too long…" instead of hanging; if that happens often, move `/research` to a Cloudflare Workflow. Scheduled jobs give each AI call up to 60 seconds, then log it and move on.
 - **Message length:** Discord messages max out at 2,000 characters, so long answers are split across several messages.
 - **@mentions:** the bot doesn't stay connected to Discord, so it answers @mentions only in channels turned on with `/listen`, and up to about a minute late (see [@mentions](#mentions)).
 
