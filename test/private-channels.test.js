@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { channelIsPublic } from "../src/commands/stats.js";
+import { channelIsPublic, fetchServerMessages, isPublicChannel } from "../src/commands/stats.js";
 import { EPHEMERAL, targetChannel } from "../src/discord.js";
 import worker, { replyFlags } from "../src/index.js";
 
@@ -11,6 +11,8 @@ afterEach(() => {
 
 const READ = String((1n << 10n) | (1n << 16n)); // View Channel + Read Message History
 const HIDDEN = [{ id: "g", type: 0, allow: "0", deny: String(1n << 10n) }];
+const NO_VIEW = String(1n << 10n);
+const NO_HISTORY = String(1n << 16n);
 
 // A server where @everyone can read, #general is open and #staff is hidden.
 const CHANNELS = {
@@ -19,6 +21,13 @@ const CHANNELS = {
   "staff-thread": { id: "staff-thread", type: 11, parent_id: "staff" },
   "general-thread": { id: "general-thread", type: 11, parent_id: "general" },
   "private-thread": { id: "private-thread", type: 12, parent_id: "general" },
+  // @everyone can read #leadership, but the Interns role can't.
+  leadership: {
+    id: "leadership",
+    type: 0,
+    permission_overwrites: [{ id: "interns", type: 0, allow: "0", deny: NO_VIEW }],
+  },
+  "leadership-thread": { id: "leadership-thread", type: 11, parent_id: "leadership" },
 };
 
 function mockServer() {
@@ -102,4 +111,66 @@ test("/tldr channel:#staff run in #general is deferred as an ephemeral reply", a
   const ctx = { waitUntil: () => {} };
   const res = await worker.fetch(request, { DISCORD_PUBLIC_KEY: publicKeyHex, DISCORD_TOKEN: "t" }, ctx);
   assert.deepEqual(await res.json(), { type: 5, data: { flags: EPHEMERAL } });
+});
+
+test("a role or member override that hides a channel from anyone makes it private", () => {
+  const guild = { id: "g", roles: [{ id: "g", permissions: READ }] };
+  const channel = (...permission_overwrites) => ({ id: "c", type: 0, permission_overwrites });
+  assert.equal(isPublicChannel(guild, channel({ id: "interns", type: 0, allow: "0", deny: NO_VIEW })), false, "role denies view");
+  assert.equal(isPublicChannel(guild, channel({ id: "interns", type: 0, allow: "0", deny: NO_HISTORY })), false, "role denies history");
+  assert.equal(isPublicChannel(guild, channel({ id: "sam", type: 1, allow: "0", deny: NO_VIEW })), false, "member denies view");
+  assert.equal(isPublicChannel(guild, channel({ id: "sam", type: 1, allow: "0", deny: NO_HISTORY })), false, "member denies history");
+  assert.equal(
+    isPublicChannel(
+      guild,
+      channel({ id: "interns", type: 0, allow: "0", deny: NO_VIEW }, { id: "mods", type: 0, allow: NO_VIEW, deny: "0" }),
+    ),
+    false,
+    "a deny another role re-allows still counts as private",
+  );
+});
+
+test("@everyone-only channels and allow-only overrides stay public", () => {
+  const guild = { id: "g", roles: [{ id: "g", permissions: READ }] };
+  assert.equal(isPublicChannel(guild, { id: "c", type: 0, permission_overwrites: [] }), true);
+  assert.equal(isPublicChannel(guild, { id: "c", type: 0 }), true);
+  const allowOnly = [
+    { id: "g", type: 0, allow: READ, deny: "0" },
+    { id: "mods", type: 0, allow: READ, deny: "0" },
+    { id: "sam", type: 1, allow: READ, deny: "0" },
+    { id: "interns", type: 0, allow: "0", deny: String(1n << 11n) }, // Send Messages only
+  ];
+  assert.equal(isPublicChannel(guild, { id: "c", type: 0, permission_overwrites: allowOnly }), true);
+  assert.equal(isPublicChannel(guild, { id: "c", type: 0, permission_overwrites: HIDDEN }), false, "@everyone deny");
+});
+
+test("a thread whose parent hides from a role is not public, and its replies are ephemeral", async () => {
+  mockServer();
+  assert.equal(await channelIsPublic({}, "g", "leadership"), false);
+  assert.equal(await channelIsPublic({}, "g", "leadership-thread"), false);
+  assert.equal(await replyFlags(interaction("tldr", "leadership"), {}), EPHEMERAL);
+});
+
+test("server-wide reads with no member skip channels hidden from a role", async () => {
+  const recent = String(BigInt(Date.now() - 1420070400000) << 22n);
+  const channels = [
+    { id: "general", type: 0, last_message_id: recent, permission_overwrites: [] },
+    {
+      id: "leadership",
+      type: 0,
+      last_message_id: recent,
+      permission_overwrites: [{ id: "interns", type: 0, allow: "0", deny: NO_VIEW }],
+    },
+  ];
+  const read = [];
+  globalThis.fetch = async (url) => {
+    url = String(url);
+    if (url.endsWith("/guilds/g")) return Response.json({ id: "g", roles: [{ id: "g", permissions: READ }] });
+    if (url.endsWith("/guilds/g/channels")) return Response.json(channels);
+    const id = url.match(/\/channels\/(\w+)\/messages/)?.[1];
+    if (id) read.push(id);
+    return Response.json([]);
+  };
+  await fetchServerMessages({}, { guildId: "g", member: null, since: new Date(Date.now() - 86400000) });
+  assert.deepEqual(read, ["general"]);
 });
