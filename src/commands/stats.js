@@ -197,9 +197,17 @@ const canRead = (perms) => (perms & VIEW_CHANNEL) !== 0n && (perms & READ_MESSAG
 // Someone with no roles: what any member of the server can see.
 const EVERYONE = { user: { id: null }, roles: [] };
 
-/** Can every member of the server read this channel? */
+/**
+ * Can every member of the server read this channel? Someone with no roles
+ * must be able to read it, and no role or member override may deny View
+ * Channel or Read Message History. That errs on the side of private: a deny
+ * that another role re-allows still counts.
+ */
 export function isPublicChannel(guild, channel) {
-  return canRead(channelPermissions(EVERYONE, guild.id, channel, basePermissions(guild, EVERYONE)));
+  if (!canRead(channelPermissions(EVERYONE, guild.id, channel, basePermissions(guild, EVERYONE)))) return false;
+  return !(channel.permission_overwrites ?? []).some(
+    (o) => o.id !== guild.id && (BigInt(o.deny ?? 0) & (VIEW_CHANNEL | READ_MESSAGE_HISTORY)) !== 0n,
+  );
 }
 
 const THREAD_TYPES = new Set([10, 11, 12]);
@@ -229,12 +237,12 @@ export async function fetchServerMessages(env, { guildId, member, since }) {
     discordApi(env, `/guilds/${guildId}`),
     discordApi(env, `/guilds/${guildId}/channels`),
   ]);
-  const who = member ?? EVERYONE;
-  const base = basePermissions(guild, who);
+  const base = member && basePermissions(guild, member);
+  const readable = member ? (c) => canRead(channelPermissions(member, guildId, c, base)) : (c) => isPublicChannel(guild, c);
   const candidates = channels
     .filter((c) => c.type === 0 || c.type === 5) // text and announcement channels
     .filter((c) => c.last_message_id && snowflakeTime(c.last_message_id) >= since.getTime())
-    .filter((c) => canRead(channelPermissions(who, guildId, c, base)))
+    .filter(readable)
     .sort((a, b) => (BigInt(b.last_message_id) > BigInt(a.last_message_id) ? 1 : -1));
 
   const messages = [];
