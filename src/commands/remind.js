@@ -1,11 +1,17 @@
 import { describeNow, extractStructured } from "../claude.js";
 import {
+  EPHEMERAL,
+  NO_MENTIONS,
   UserFacingError,
   discordTimestamp,
+  editOriginal,
+  followUp,
   getOption,
+  getSubcommand,
   invokingUser,
   replyWithText,
   sendChannelMessage,
+  splitMessage,
 } from "../discord.js";
 
 const SCHEMA = {
@@ -28,6 +34,7 @@ const SCHEMA = {
 };
 
 const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
+const MAX_PENDING_PER_USER = 25;
 
 export async function ensureRemindersTable(env) {
   await env.DB.prepare(
@@ -43,9 +50,26 @@ export async function ensureRemindersTable(env) {
   await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_reminders_due_at ON reminders (due_at)").run();
 }
 
+async function pendingFor(env, userId) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, channel_id, message, due_at FROM reminders WHERE user_id = ? ORDER BY due_at, id LIMIT ?",
+  )
+    .bind(userId, MAX_PENDING_PER_USER)
+    .all();
+  return results;
+}
+
 export async function remind(interaction, env) {
   const request = getOption(interaction, "reminder");
   const timeZone = env.TIMEZONE || "America/New_York";
+
+  const user = invokingUser(interaction);
+  await ensureRemindersTable(env);
+  if ((await pendingFor(env, user.id)).length >= MAX_PENDING_PER_USER) {
+    throw new UserFacingError(
+      `You already have ${MAX_PENDING_PER_USER} reminders waiting. See them with \`/reminders list\` and cancel one with \`/reminders cancel\` first.`,
+    );
+  }
 
   const parsed = await extractStructured(env, {
     system: `You turn casual reminder requests into a time and a message. ${describeNow(timeZone)}
@@ -73,9 +97,7 @@ If only a day is given with no time, use 9:00 AM.`,
     return;
   }
 
-  const user = invokingUser(interaction);
   const message = parsed.message.slice(0, 500);
-  await ensureRemindersTable(env);
   await env.DB.prepare(
     "INSERT INTO reminders (channel_id, user_id, message, due_at) VALUES (?, ?, ?, ?)",
   )
@@ -87,6 +109,45 @@ If only a day is given with no time, use 9:00 AM.`,
     interaction,
     `⏰ Got it! I'll post a reminder here ${discordTimestamp(due)} (${discordTimestamp(due, "R")}):\n> ${message}`,
   );
+}
+
+function reminderLine(row) {
+  const due = new Date(row.due_at * 1000);
+  return `**#${row.id}** · <#${row.channel_id}> · ${discordTimestamp(due, "f")} (${discordTimestamp(due, "R")})\n> ${row.message}`;
+}
+
+/** /reminders list and /reminders cancel: only ever the caller's own reminders. Replies are private (see replyFlags). */
+export async function reminders(interaction, env) {
+  await ensureRemindersTable(env);
+  const me = invokingUser(interaction);
+  const action = getSubcommand(interaction) ?? "list";
+
+  if (action === "cancel") {
+    const id = Number(getOption(interaction, "id"));
+    const row = await env.DB.prepare("SELECT id, channel_id, message, due_at FROM reminders WHERE id = ? AND user_id = ?")
+      .bind(id, me.id)
+      .first();
+    const deleted = row && (await env.DB.prepare("DELETE FROM reminders WHERE id = ? AND user_id = ?").bind(id, me.id).run());
+    if (!row || deleted.meta?.changes === 0) {
+      throw new UserFacingError(`I couldn't find a pending reminder #${id} of yours. See yours with \`/reminders list\`.`);
+    }
+    await editOriginal(env, interaction, { content: `🗑️ Cancelled reminder ${reminderLine(row)}`, allowed_mentions: NO_MENTIONS });
+    return;
+  }
+
+  const rows = await pendingFor(env, me.id);
+  if (!rows.length) {
+    await editOriginal(env, interaction, {
+      content: 'You have no pending reminders. Set one with `/remind reminder:"tomorrow at 6pm to book the restaurant"`.',
+      allowed_mentions: NO_MENTIONS,
+    });
+    return;
+  }
+  const text = `**Your reminders** (cancel one with \`/reminders cancel id:<number>\`)\n${rows.map(reminderLine).join("\n")}`;
+  // Follow-ups are public unless flagged, so the rest of a long list stays private too.
+  const [first, ...more] = splitMessage(text);
+  await editOriginal(env, interaction, { content: first, allowed_mentions: NO_MENTIONS });
+  for (const chunk of more) await followUp(env, interaction, { content: chunk, flags: EPHEMERAL, allowed_mentions: NO_MENTIONS });
 }
 
 // A reminder that keeps failing for a transient reason is retried every

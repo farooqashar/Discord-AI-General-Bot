@@ -325,6 +325,19 @@ const DEFINITIONS = [
     ],
   },
   {
+    name: "reminders",
+    description: "See or cancel your pending reminders (only you see the reply)",
+    options: [
+      { type: 1, name: "list", description: "Your pending reminders, soonest first" },
+      {
+        type: 1,
+        name: "cancel",
+        description: "Cancel one of your reminders",
+        options: [{ type: 4, name: "id", description: "The reminder's number from /reminders list", required: true, min_value: 1 }],
+      },
+    ],
+  },
+  {
     name: "birthday",
     description: "Save birthdays and get a happy-birthday post on the day",
     options: [
