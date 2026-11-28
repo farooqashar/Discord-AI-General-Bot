@@ -36,6 +36,28 @@ test("on Fable, forced forms become a plain instruction instead of a forced tool
   assert.match(req.system, /Respond only by calling the fill tool/);
 });
 
+test("on Sonnet 5.5, forced forms become a plain instruction instead of a forced tool", () => {
+  const req = buildRequest({ CLAUDE_MODEL: "claude-sonnet-5-5" }, form);
+  assert.deepEqual(req.tool_choice, { type: "auto" });
+  assert.equal(req.thinking, undefined);
+  assert.match(req.system, /Respond only by calling the fill tool/);
+});
+
+test("an unknown model gets the plain instruction, which works on every model", () => {
+  const req = buildRequest({ CLAUDE_MODEL: "claude-newmodel-9" }, form);
+  assert.deepEqual(req.tool_choice, { type: "auto" });
+  assert.equal(req.thinking, undefined);
+  assert.match(req.system, /Respond only by calling the fill tool/);
+});
+
+test("models known to take a forced tool match by whole ID, with or without a date", () => {
+  for (const model of ["claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-5"]) {
+    const req = buildRequest({ CLAUDE_MODEL: model }, form);
+    assert.deepEqual(req.tool_choice, { type: "tool", name: "fill" }, model);
+    assert.deepEqual(req.thinking, { type: "disabled" }, model);
+  }
+});
+
 test("extractStructured still works when the model thinks first", async () => {
   globalThis.fetch = async () =>
     Response.json({
