@@ -157,6 +157,11 @@ async function findByName(env, guildId, channelId, name) {
 }
 
 const NOT_FOUND = "I couldn't find a countdown with that name. See them all with `/countdown list`.";
+// One reply for every name clash, visible or hidden, so it never echoes the
+// name or points at a countdown this channel can't see. It still reveals that
+// the name is in use somewhere; avoiding that would mean allowing the same
+// name in different channels.
+const NAME_TAKEN = "That name is already taken in this server. Pick a different name.";
 
 export async function countdown(interaction, env) {
   if (!interaction.guild_id) throw new UserFacingError("Countdowns only work inside a server.");
@@ -174,7 +179,7 @@ export async function countdown(interaction, env) {
       throw new UserFacingError(`This server already has ${MAX_PER_SERVER} countdowns. Remove one with \`/countdown remove\` first.`);
     }
     if (rows.some((r) => r.name.toLowerCase() === name.toLowerCase())) {
-      throw new UserFacingError(`There's already a countdown called **${name}**. Pick another name or remove that one first.`);
+      throw new UserFacingError(NAME_TAKEN);
     }
     const when = await parseWhen(env, getOption(interaction, "when"));
     const row = { name, target_at: Math.floor(when.getTime() / 1000) };
