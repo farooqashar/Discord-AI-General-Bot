@@ -2,7 +2,7 @@
   "name": "discord-ai-general-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "A small Discord bot on Cloudflare Workers with Claude-powered slash commands: /ask, /tldr, /event, /remind and /research.",
+  "description": "A Discord bot on Cloudflare Workers with Claude-powered slash commands.",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
