@@ -13,8 +13,13 @@ export function persona(env) {
   return `You are ${name}, an AI assistant in a Discord server. Don't mention which AI model or company powers you, and don't call yourself by any other name. If someone asks what you are or who made you, just say you're ${name}, a bot for this server.`;
 }
 
-// Models that always think and reject forced tool choice (see the model docs).
-const ALWAYS_THINKS = /fable|mythos|opus/;
+// Models known to accept a forced tool_choice with thinking disabled. Every
+// other model (Sonnet 5.5, Opus, Fable, Mythos, and anything unknown) gets the
+// tool asked for in words instead, which works everywhere: some models reject
+// a forced tool_choice, and some reject `thinking: { type: "disabled" }`.
+// Whole IDs only, with an optional dated suffix: claude-sonnet-5 is a prefix
+// of claude-sonnet-5-5.
+const FORCED_TOOL_OK = /^claude-(haiku-5-5|haiku-4-5|sonnet-5)(-\d{8})?$/;
 
 // Thinking tokens count toward max_tokens, so a tight limit can end a reply
 // before any text is written. You only pay for tokens actually used, so a
@@ -31,8 +36,8 @@ export function buildRequest(env, body) {
   const request = { model, ...body, system, max_tokens: Math.max(body.max_tokens ?? 0, MIN_MAX_TOKENS) };
 
   const forced = body.tool_choice && ["tool", "any"].includes(body.tool_choice.type);
-  if (forced && ALWAYS_THINKS.test(model)) {
-    // These models refuse a forced tool call; ask for it in words instead.
+  if (forced && !FORCED_TOOL_OK.test(model)) {
+    // Not known to take a forced tool call; ask for it in words instead.
     const name = body.tool_choice.name;
     request.tool_choice = { type: "auto" };
     request.system = `${system}\n\nRespond only by calling the ${name ? `${name} ` : ""}tool, with no other text.`;
