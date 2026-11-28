@@ -70,7 +70,9 @@ test("adds, lists and removes countdowns", async () => {
   assert.match(lastReply(calls), /Countdown started!\n📅 \*\*Japan trip\*\*: 116 days left.*\nI'll post here when the time comes\./s);
   assert.deepEqual([DB.rows[0].channel_id, DB.rows[0].created_by], ["c1", "me"]);
 
-  await assert.rejects(countdown(sub("add", [{ name: "name", value: "japan TRIP" }, { name: "when", value: "x" }]), { DB }), /already a countdown/);
+  await assert.rejects(countdown(sub("add", [{ name: "name", value: "japan TRIP" }, { name: "when", value: "x" }]), { DB }), {
+    message: "That name is already taken in this server. Pick a different name.",
+  });
 
   await countdown(sub("list"), { DB });
   assert.match(lastReply(calls), /^\*\*Countdowns\*\*\n📅 \*\*Japan trip\*\*: 116 days left/);
@@ -211,6 +213,37 @@ test("countdowns hidden from a channel never change what it finds or removes", a
 
   await countdown(inChannel("planning", sub("remove", party)), { DB });
   assert.deepEqual(DB.rows.map((r) => r.name), ["Party planning"], "the exact match is removed where it's visible");
+});
+
+test("adding a name taken by a hidden countdown replies as for a visible one", async () => {
+  const DB = fakeDb();
+  const later = (days) => Math.floor((Date.now() + days * D) / 1000);
+  DB.rows.push({ id: 1, guild_id: "g", channel_id: "planning", name: "Surprise party", target_at: later(5), created_by: "me" });
+  DB.rows.push({ id: 2, guild_id: "g", channel_id: "general", name: "Japan trip", target_at: later(10), created_by: "me" });
+  const READ = String((1n << 10n) | (1n << 16n));
+  mock([
+    [
+      "/guilds/g/channels",
+      () => [
+        { id: "general", type: 0, permission_overwrites: [] },
+        { id: "planning", type: 0, permission_overwrites: [{ id: "g", type: 0, allow: "0", deny: READ }] },
+      ],
+    ],
+    ["/guilds/g", () => ({ id: "g", roles: [{ id: "g", permissions: READ }] })],
+  ]);
+  const inChannel = (channel_id, interaction) => ({ ...interaction, channel_id });
+  const add = (name) =>
+    countdown(inChannel("general", sub("add", [{ name: "name", value: name }, { name: "when", value: "x" }])), { DB }).then(
+      () => "added",
+      (err) => err.message,
+    );
+
+  const hidden = await add("surprise PARTY");
+  const visible = await add("japan TRIP");
+  assert.equal(hidden, visible, "a hidden clash gets the same reply as a visible one");
+  assert.doesNotMatch(hidden, /surprise party/i);
+  assert.doesNotMatch(hidden, /remove/i);
+  assert.equal(DB.rows.length, 2, "names stay unique per server");
 });
 
 test("threads follow their parent channel, private threads stay private", async () => {
